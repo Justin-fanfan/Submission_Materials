@@ -2,7 +2,7 @@
 
 | 文档信息 | 内容 |
 | --- | --- |
-| 文档版本 | V0.1（编写中） |
+| 文档版本 | V0.2（编写中） |
 | 产品名称 | LongPet |
 | 文档类型 | 产品设计文档 |
 
@@ -11,6 +11,7 @@
 | 版本 | 日期 | 修订说明 |
 | --- | --- | --- |
 | V0.1 | 2026-09-13 | 建立正式报告框架与分层目录 |
+| V0.2 | 2026-09-13 | 完成报告第六章正文 |
 
 ## 摘要
 
@@ -100,27 +101,22 @@
   - 5.12 关键物料选型依据
   - 5.13 当前硬件限制与工程化缺口
 - 6 LoongArch 系统软件平台设计
-  - 6.1 目标运行环境与基础系统
-  - 6.2 2K0300 指令集与资源特征
-  - 6.3 LoongArch AI 软件生态与兼容性问题
-  - 6.4 基础系统路线选择与实机稳定性依据
-  - 6.5 Buildroot 软件栈扩展
-  - 6.6 NumPy 源码构建与无 LSX/LASX 适配
-  - 6.7 ONNX Runtime 通用标量路径适配
-    - 6.7.1 原始问题与定位过程
-    - 6.7.2 MLAS 架构判断与错误路径
-    - 6.7.3 Scalar MLAS 修复方案
-    - 6.7.4 数值正确性与板端验证
-  - 6.8 sherpa-onnx 与音频依赖移植
-  - 6.9 Qt6、OpenCV、FFmpeg/GStreamer 与多媒体环境
-  - 6.10 Hybrid Rootfs 设计
-    - 6.10.1 设计背景与适用边界
-    - 6.10.2 组件选择性合并
-    - 6.10.3 动态依赖闭包与 ABI/架构校验
-    - 6.10.4 LSX/LASX 指令扫描
-    - 6.10.5 受保护基础文件与 locale 校验
-    - 6.10.6 构建产物、校验和与可复现性
-  - 6.11 系统启动、服务管理与自恢复
+  - 6.1 目标板约束与平台设计目标
+  - 6.2 LoongArch AI 生态的兼容性边界
+  - 6.3 Buildroot 软件栈与交叉构建基线
+  - 6.4 Python、NumPy 与音频依赖的源码构建
+  - 6.5 ONNX Runtime 的无向量指令适配
+    - 6.5.1 可加载但数值错误的问题
+    - 6.5.2 MLAS 标量路径的源码级修复
+    - 6.5.3 算子、模型与部署链路验证
+  - 6.6 sherpa-onnx、Qt6、OpenCV 与多媒体能力
+  - 6.7 基础系统路线与 Hybrid Rootfs 决策
+  - 6.8 Hybrid Rootfs 的合并与校验设计
+    - 6.8.1 清单驱动的组件合入和依赖闭包
+    - 6.8.2 ABI、架构与 ISA 检查
+    - 6.8.3 基础文件保护、locale 与产物校验
+  - 6.9 systemd、自启动与自恢复
+  - 6.10 验证结论与证据边界
 - 7 LongPet 应用软件架构
   - 7.1 应用软件总体分层
   - 7.2 Qt6 表示层与适老界面
@@ -358,47 +354,166 @@
 
 ## 6 LoongArch 系统软件平台设计
 
-### 6.1 目标运行环境与基础系统
+LongPet 在龙芯 2K0300 上运行图形、语音、视觉和多媒体组件。软件平台采用受控交叉构建、标量推理适配和 Hybrid Rootfs，并分别验证产物兼容性、推理数值和板端功能。
 
-### 6.2 2K0300 指令集与资源特征
+### 6.1 目标板约束与平台设计目标
 
-### 6.3 LoongArch AI 软件生态与兼容性问题
+目标主控龙芯 2K0300 采用单核 LA264、约 1 GHz 的 LoongArch64 处理器，不支持 LSX/LASX 向量指令。编入这些指令的二进制包无法在目标板运行；语音、视觉和界面并发时还需控制 CPU 与内存占用。一次板端测试显示系统可见内存约 369 MiB，未配置 swap。
 
-### 6.4 基础系统路线选择与实机稳定性依据
+交付基线采用 LoongArch64 LP64D ABI、Linux 6.12.0.lsgd 内核、glibc 2.38 和 Python 3.12。外部 GCC 13.3 工具链以通用 `loongarch64` 和严格对齐为编译目标。ONNX Runtime 产物还需满足目标板内核的 16 KiB ELF 可加载段对齐要求。
 
-### 6.5 Buildroot 软件栈扩展
+软件栈分为基础系统、通用平台、AI 与媒体运行时、应用功能四层（图 6-1）。
 
-### 6.6 NumPy 源码构建与无 LSX/LASX 适配
+```mermaid
+flowchart BT
+    H["硬件平台<br/>龙芯 2K0300 · LoongArch64<br/>单核 LA264 · 约 1 GHz · 无 LSX/LASX"]
+    B["基础系统与设备能力<br/>稳定基础 rootfs · Linux 6.12 · glibc 2.38<br/>驱动 · 网络 · ALSA 音频 · V4L2 · systemd"]
+    P["通用软件平台<br/>Qt 6 · Python 3 · NumPy"]
+    R["AI 与多媒体运行时<br/>ONNX Runtime 标量 MLAS · sherpa-onnx · OpenCV<br/>sounddevice/PortAudio · FFmpeg · GStreamer"]
+    A["LongPet 应用功能<br/>适老 UI · 本地 KWS/语音交互 · Vision<br/>音视频通话 · 设备与家庭服务"]
+    H --> B --> P --> R --> A
+```
 
-### 6.7 ONNX Runtime 通用标量路径适配
+**图 6-1 LongPet 面向 2K0300 的 LoongArch 软件栈总体架构**
 
-#### 6.7.1 原始问题与定位过程
+### 6.2 LoongArch AI 生态的兼容性边界
 
-#### 6.7.2 MLAS 架构判断与错误路径
+预编译的 LoongArch 软件包可能使用 2K0300 不支持的向量指令，运行时的架构判断也可能选错计算内核。关键组件统一交叉构建，并检查指令集、ABI、动态库依赖和推理数值。
 
-#### 6.7.3 Scalar MLAS 修复方案
+源码构建固定版本与编译选项；构建后继续检查 ELF 产物和模型输出。
 
-#### 6.7.4 数值正确性与板端验证
+### 6.3 Buildroot 软件栈与交叉构建基线
 
-### 6.8 sherpa-onnx 与音频依赖移植
+Buildroot 2024.08 的 `output-qt6` 构建树使用面向 2K0300 的媒体版 defconfig，包含 Qt、Python/AI、视觉处理及多媒体软件包。主要组件见表 6-1。
 
-### 6.9 Qt6、OpenCV、FFmpeg/GStreamer 与多媒体环境
+**表 6-1 LongPet LoongArch 软件平台关键组件与版本基线**
 
-### 6.10 Hybrid Rootfs 设计
+| 组件 | 当前工程版本 | 构建方式 | 在 LongPet 中的主要用途 | 设计说明 / 关键考虑 |
+| --- | --- | --- | --- | --- |
+| Qt 6 | 6.8.1 | Buildroot 源码交叉构建 | Widgets 触控界面、网络、SQL、SVG | 采用 `linuxfb` 和触摸输入插件，适配板端显示环境 |
+| Python 3 | 3.12.5 | Buildroot 源码交叉构建 | 本地 KWS 及 Python AI 组件运行 | 与基础系统 Python 3.12 运行环境保持兼容 |
+| NumPy | 1.25.0 | Buildroot/Meson 源码交叉构建 | 音频数据处理和 AI Python 扩展基础 | 固定工具链与目标 ISA，避免依赖不可控的预编译二进制 |
+| OpenCV | 4.10.0 | Buildroot 源码交叉构建 | 摄像头输入、图像预处理与视觉跟踪 | 保留 V4L2、视频处理及目标端所需接口 |
+| ONNX Runtime | 1.17.1 | Buildroot 源码交叉构建并应用 MLAS 补丁 | 本地 ONNX 模型推理 | 对无 LSX/LASX 目标启用一致的标量路径，并验证数值正确性 |
+| sherpa-onnx | 1.12.15 | Buildroot 源码交叉构建 | 语音推理组件 | 复用系统 ONNX Runtime，避免私有运行库副本不一致 |
+| sounddevice | 0.5.1 | Buildroot 源码打包，配套 CFFI/PortAudio | Python 音频采集 | 将动态加载依赖列为合并清单的必需文件 |
+| FFmpeg | 6.1.2 | Buildroot 源码交叉构建 | 多媒体工具与编解码库 | 按当前构建基线交付，控制板端实时编码负载 |
+| GStreamer | 1.22.9 | Buildroot 源码交叉构建 | 插件化音视频处理能力 | 显式纳入运行时插件，不能只依赖 ELF 依赖闭包 |
 
-#### 6.10.1 设计背景与适用边界
+Buildroot 生成相互匹配的 target、staging 和交叉 SDK。`output-qt6/target` 为 Hybrid Rootfs 提供软件组件，最终镜像按清单选择合入。
 
-#### 6.10.2 组件选择性合并
+### 6.4 Python、NumPy 与音频依赖的源码构建
 
-#### 6.10.3 动态依赖闭包与 ABI/架构校验
+部分预编译 NumPy 包使用 2K0300 不支持的扩展指令，因此从 NumPy 1.25.0 源码构建。构建过程使用 Buildroot 的 Meson 交叉编译流程，并将目标端头文件安装到 staging，供下游扩展使用。Python 3.12、NumPy、CFFI、sounddevice 和 PortAudio 构成板端 Python 音频链路。
 
-#### 6.10.4 LSX/LASX 指令扫描
+Buildroot 以 Python 字节码交付，合并时保留 NumPy、sounddevice 的 `.pyc` 文件及二进制扩展。sounddevice 经 CFFI 间接加载 PortAudio，相关文件不会全部出现在 ELF 的 `DT_NEEDED` 中；合并清单因此显式要求 sounddevice、`_sounddevice`、`_cffi_backend` 和 PortAudio 同时存在。板端分别验证数值计算、模块导入和音频设备访问。
 
-#### 6.10.5 受保护基础文件与 locale 校验
+### 6.5 ONNX Runtime 的无向量指令适配
 
-#### 6.10.6 构建产物、校验和与可复现性
+#### 6.5.1 可加载但数值错误的问题
 
-### 6.11 系统启动、服务管理与自恢复
+ONNX Runtime 1.17.1 的原有 MLAS 路径在无 LSX/LASX 的 2K0300 上出现数值错误。早期板端测试中，FP32 模型输出固定乱码，INT8 模型输出空串，静音输入也得到异常结果；模型可以加载，但推理结果错误。
+
+源码与产物检查发现，原 LoongArch 路径在无向量内核时混用了 16 宽 B 矩阵打包和 4 宽标量计算内核。数据布局不一致导致 MatMul、Gemm、Conv 等计算失真，进而影响 Zipformer ASR 解码。修复前后的算子测试验证了这一定位。
+
+#### 6.5.2 MLAS 标量路径的源码级修复
+
+ONNX Runtime 包新增默认关闭的 `onnxruntime_MLAS_FORCE_SCALAR` 选项，仅在 2K0300 构建规则中启用。补丁调整 MLAS 源文件选择、LoongArch 宏和 LSX 头文件条件，改用通用标量源，并将 B 矩阵打包统一为与标量内核匹配的 4 宽格式。产物仍为 LoongArch64 LP64D 库。
+
+构建使用通用 `loongarch64` 和严格对齐选项。sherpa-onnx 复用 `/usr/lib` 中的 ONNX Runtime，安装时移除 Python 包内的私有运行库副本。部署测试曾因绝对 RPATH 误加载旧库；改用相对 `$ORIGIN` 路径后，隔离库验证通过。验证时需核对实际加载的库版本。
+
+#### 6.5.3 算子、模型与部署链路验证
+
+目标板隔离部署的十项 ONNX Runtime 算子测试均通过。Conv、LayerNorm、Softmax 相对独立参考的最大绝对误差分别约为 `1.9×10⁻⁶`、`1.3×10⁻⁶`、`3.0×10⁻⁸`；其余受测算子为零误差。判定阈值为绝对误差 `1×10⁻⁵`、相对误差 `1×10⁻⁴`。FP32、INT8 流式识别测试中，静音输出为空串，语音结果连续三次一致，四类样例与 x86 参考逐字匹配。x86 参考使用的 sherpa-onnx 版本与板端不同，这些结果仅覆盖受测样例。
+
+构建与镜像检查确认了标量源文件、无 LSX/LASX 指令、16 KiB ELF 可加载段对齐及修复库已纳入交付包。板端隔离部署的算子与语音测试通过；完整 Hybrid Rootfs 的启动与功能验证见项目综合测试报告。
+
+图 6-2 展示从数值错误定位到标量路径修复、板端验证的流程。
+
+```mermaid
+flowchart TD
+    A["ONNX Runtime 1.17.1<br/>已有 LoongArch64 支持"] --> B["目标 CPU：2K0300<br/>无 LSX/LASX"]
+    B --> C["原 MLAS 路径<br/>可交叉编译、可加载"]
+    C --> D["数值回归与板端语音验证<br/>可编译、可加载 ≠ 数值推理正确"]
+    D --> E["定位：16 宽 SGEMM 打包<br/>与 4 宽标量内核不匹配"]
+    E --> F["源码修复：MLAS_FORCE_SCALAR<br/>统一标量源与 4 宽打包"]
+    F --> G["重新交叉构建<br/>检查 ISA、ELF 与实际加载库"]
+    G --> H["板端算子测试<br/>FP32/INT8 语音样例及参考结果比对"]
+    H --> I["进入 LongPet 板端 AI Runtime"]
+```
+
+**图 6-2 ONNX Runtime 在无 LSX/LASX 的 2K0300 上的适配与验证路径**
+
+### 6.6 sherpa-onnx、Qt6、OpenCV 与多媒体能力
+
+sherpa-onnx 1.12.15 依赖 ONNX Runtime、Python、NumPy 和 ALSA。构建启用 Python 接口，关闭未使用的 TTS、说话人分离和 GPU 选项，并禁用 Eigen 向量化。LongPet 的本地 KWS 另由独立维护的 Python/ONNX 组件实现。
+
+界面使用 Qt6 Widgets/Network/SQL/SVG，显示采用 `linuxfb`，触摸由输入插件接入。OpenCV 4.10.0 提供 C++/Python 图像处理、V4L2 摄像头和 FFmpeg 视频后端。媒体组件包含 FFmpeg、GStreamer 插件、Opus、VP8、RTP、DTLS、SRTP 与 WebRTC 相关基础库。合并清单显式列出通过运行时注册或 `dlopen()` 加载的插件。板端尚未完成全部 WebRTC 或实时软件编码场景的性能验收；当前也没有已确认可用的通用硬件视频编码器。
+
+### 6.7 基础系统路线与 Hybrid Rootfs 决策
+
+早期实机验证显示，直接套用龙芯buildroot仓库（[open-loongarch/buildroot-2024.08](https://gitee.com/open-loongarch/buildroot-2024.08)）构建的系统，完整替换基础系统后的稳定性未达到项目要求（出现cpu占用率异常波动等问题）。交付方案因此保留已验证的出厂自带基础系统，仅按清单合入所需的用户空间组件。
+
+Hybrid Rootfs 以可启动的板卡基础 rootfs、内核和 ramdisk 为基线，从 `output-qt6/target` 选取 Qt6、Python/AI、OpenCV 和媒体组件。原有内核、模块、固件、动态加载器及核心 C/C++ 运行库保持不变；新增组件通过依赖、ABI 和 ISA 检查后合入。
+
+### 6.8 Hybrid Rootfs 的合并与校验设计
+
+基础系统与 Buildroot target 按清单合并，经依赖、ABI、ISA、基础文件和完整性校验后形成交付包，再进行板端验证（图 6-3）。
+
+```mermaid
+flowchart TD
+    B["已验证稳定的板端基础系统<br/>内核、驱动、核心运行库"] --> M["Hybrid Rootfs<br/>按 components.yaml 选择性合并"]
+    T["Buildroot output-qt6/target<br/>Qt6 · Python/NumPy · OpenCV<br/>ONNX Runtime/sherpa-onnx · FFmpeg/GStreamer"] --> M
+    M --> C1["组件必需项与 DT_NEEDED 依赖闭包"]
+    C1 --> C2["LoongArch64 ELF、ABI 与 LSX/LASX ISA 检查"]
+    C2 --> C3["受保护基础文件、locale 与配置检查"]
+    C3 --> C4["归档完整性与 SHA256 自检"]
+    C4 --> O["Hybrid Rootfs 交付包"]
+    O --> V["部署到 2K0300<br/>启动与运行验证"]
+```
+
+**图 6-3 LongPet Hybrid Rootfs 的构建、组件合并与完整性校验流程**
+
+#### 6.8.1 清单驱动的组件合入和依赖闭包
+
+`components.yaml` 以包含/排除规则、必需文件和受保护路径限定合并范围，覆盖 locale、Qt6、OpenCV、NumPy、sounddevice、ONNX Runtime、sherpa-onnx、FFmpeg、V4L2 工具及 GStreamer。必需文件缺失时构建失败；GStreamer 插件和 Python 动态加载依赖需显式列入清单。
+
+解析器递归读取新增 ELF 的 `DT_NEEDED`，优先复用基础 rootfs 中的库，缺失时从 Buildroot target 补齐共享库及链接名，同时保留原有目录布局和受保护文件。合并后检查动态依赖、断链软链接及 Qt5 残留依赖。2026 年 8 月 29 日的记录显示：必需组件缺失 0、未解析依赖 0；检查 1739 个 ELF，断链软链接 0。
+
+#### 6.8.2 ABI、架构与 ISA 检查
+
+合并前核对基础 rootfs 与 target 的 glibc 版本、Python 主版本，以及内核镜像与模块目录；新增 ELF 的 GLIBC、GLIBCXX、CXXABI 符号版本要求不得超出基础运行库能力。8 月 29 日检查时，两套系统均使用 glibc 2.38，新增 ELF 的符号版本要求未超限。
+
+架构检查遍历合并 rootfs 的全部 ELF，要求 `Machine=LoongArch`。ISA 检查默认反汇编本次新增的 ELF，拒绝 LSX/LASX 指令；也可启用全 rootfs 严格扫描。该次检查发现非 LoongArch ELF 0 个，新增 ELF 的向量指令命中 0 次。默认模式的 ISA 检查范围限于新增 ELF。
+
+#### 6.8.3 基础文件保护、locale 与产物校验
+
+清单保护 `/boot`、内核模块、固件、动态加载器、核心 glibc/libstdc++ 与既有系统配置。构建前后对关键基础文件计算 SHA256 并比较；不一致时停止交付。Qt6 所需 UTF-8 环境通过 `locale-archive` 和 `LANG=C.UTF-8` 配置补齐，构建过程校验 archive 非空且包含 C.UTF-8。合并还保留归档的数字属主、权限、扩展属性和 ACL，检查目录层级、关键文件、压缩包完整性，并对 rootfs、内核和 ramdisk 生成及自检 `SHA256SUMS`。
+
+8 月 29 日合并记录显示受保护文件未变、locale 验证通过，rootfs、内核和 ramdisk 的校验通过。现有构建流程可按固定输入和配置重建软件集合；尚无不同主机间逐字节一致的验证记录。
+
+### 6.9 systemd、自启动与自恢复
+
+LongPet 服务以独立的 `longpet` 用户运行，配置显示、触摸、音频、串口权限和私有运行目录，并指定 `linuxfb` framebuffer、`tty1` VT 与触摸输入插件。板端联调解决了 `tty1` 与控制台抢占、设备节点权限问题；整板重启后应用和界面能够恢复。服务通过 `Restart=always` 在进程异常退出后自动重启。
+
+针对特定 Wi-Fi 驱动探测失败，系统配置了条件式恢复服务。时间同步已启用，但 RTC 读取和重启后的同步稳定性仍需验证，提醒服务应检查时钟是否可信。合并系统在 `/etc/locale.conf` 中设置 C.UTF-8；冷启动验收已检查 Qt 字符编码、媒体设备权限、网络恢复及并发资源占用。
+
+### 6.10 验证结论与证据边界
+
+表 6-2 汇总已完成的构建检查与板端测试。具体测试条件见功能与性能报告。
+
+**表 6-2 LongPet LoongArch 平台关键问题、设计决策与验证结果矩阵**
+
+| 工程问题 | 设计决策 | 验证方式 | 当前结果 / 状态 |
+| --- | --- | --- | --- |
+| 2K0300 无 LSX/LASX | 采用通用目标编译选项，排除不兼容向量路径 | 交叉编译、ELF 架构与新增 ELF 指令扫描 | 构建与 ISA 校验通过 |
+| LoongArch AI/Python 组件不能只按架构名称直接复用 | 固定源码、工具链和 ABI 基线 | 目标包构建、符号版本及板端导入检查 | 构建与运行验证通过 |
+| NumPy 等 Python 扩展需受控构建 | Buildroot 源码交叉构建，保留字节码与扩展模块 | 构建产物、清单必需项和板端导入检查 | 构建与板端验证通过 |
+| ONNX Runtime 可加载但曾出现数值错误 | 强制一致的标量 MLAS 和 4 宽打包路径 | 十项板端算子、FP32/INT8 语音样例及参考结果比对 | 板端数值验证通过 |
+| 图形、视觉、语音和媒体组件需在同一目标环境协作 | 扩展 Buildroot Qt6、OpenCV、Python/AI、FFmpeg/GStreamer 配置 | target 构建、运行库与插件合并检查、板端功能验证 | 构建与运行验证通过 |
+| 完整替换基础系统的稳定性未达项目要求 | 保留稳定基础系统，选择性合入 Buildroot 用户空间 | Hybrid Rootfs 合并校验和目标板运行验收 | Hybrid 方案板端验证通过 |
+| 混合系统可能出现依赖、ABI/ISA 或基础文件冲突 | 对全 rootfs 依赖、符号版本、ISA、受保护文件和 SHA256 分层检查 | 合并报告与最终归档自检 | 依赖、兼容性与完整性校验通过 |
+| 嵌入式应用需要自动启动和进程故障恢复 | systemd 管理 LongPet，配置运行权限与自动重启 | 整板重启、服务重启和异常退出恢复测试 | 板端验证通过 |
 
 ## 7 LongPet 应用软件架构
 
@@ -627,4 +742,3 @@
 ### 附录 E 第三方软件、库与模型清单
 
 ### 附录 F 参考资料
-
