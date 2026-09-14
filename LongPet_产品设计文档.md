@@ -2,7 +2,7 @@
 
 | 文档信息 | 内容 |
 | --- | --- |
-| 文档版本 | V0.5（编写中） |
+| 文档版本 | V0.7（编写中） |
 | 产品名称 | LongPet |
 | 文档类型 | 产品设计文档 |
 
@@ -15,6 +15,8 @@
 | V0.3 | 2026-09-13 | 完成报告第十章正文 |
 | V0.4 | 2026-09-14 | 将第八章拆分为八、九两章，后面章节依次顺延，完成报告第八、九章正文 |
 | V0.5 | 2026-09-14 | 完成第七章正文，同步第八章离线语音流程图 |
+| V0.6 | 2026-09-14 | 完成第十章正文和附录B |
+| V0.7 | 2026-09-14 | 完成第四章正文 |
 ## 摘要
 
 <!-- 待正文完成后撰写。 -->
@@ -307,25 +309,218 @@
 
 ## 4 系统总体设计
 
+LongPet 采用龙芯 2K0300 主控、Family Desktop 家属端和 ESP32-S3 Motion MCU 协同架构。主控统一承载适老交互、本地照护、语音与视觉感知、家庭连接和运动策略；家属端提供远程查看、管理与人工协助；MCU 独立负责电机和头部舵机的执行校验、时效保护与故障停车。Buildroot / LoongArch 系统工程为主控提供可部署的软件底座。这样的分工使业务状态集中、家庭协作便捷、运动安全边界清晰。各层实现、协议和验证见第 6—11 章及附录 B。
+
 ### 4.1 总体设计原则
+
+总体设计同时考虑单核目标板的资源预算、老人端的低操作负担、家属协作及运动设备的安全要求。
+
+| 设计原则 | 在 LongPet 中的落实 |
+| --- | --- |
+| LoongArch 原生部署与资源预算优先 | 主控在无 LSX/LASX 的单核 2K0300 上运行；关键运行库按目标 ISA 构建并验证。视觉采用低频检测与帧间跟踪，异步任务处理最新帧，避免积压旧观测。 |
+| 本地基础能力与在线扩展分离 | 提醒、已保存的关怀记录、本地 KWS 快捷动作和已配置的陪伴音频由设备侧提供；开放式 ASR/LLM/TTS 与天气通过外部 Provider 扩展，各项能力独立反馈可用状态。 |
+| 老人端简化、家属端承担复杂操作 | 老人端采用大按钮、浅层导航和直接状态反馈；家属端负责提醒、设置、AI 视野、通话、模式和受限远控。两端复用主控的业务规则与设备状态。 |
+| 感知与执行分权 | KWS 和 Vision 提供事件及带时效的观测，策略生成运动意图，MotionService 仲裁控制权，MCU 校验并执行。感知结果经逐级确认后进入运动链路。 |
+| 外部依赖有边界、有生命周期 | Service 通过 Port/Adapter 接入 Provider、设备和 UART；摄像头支持多消费者共享，音频由独占 owner 协调，语音回调按会话隔离。通话和远控结束时及时释放资源与控制权。 |
+| 局部故障可降级，关键状态须真实 | AI、天气、Vision、FamilyLink 和 Motion 分别反馈故障与时效；天气快照标记新鲜度，旧人物框隐藏，远控失联后撤销控制。SQLite 初始化失败时明确停止启动。 |
+
+**表 4-1 LongPet 总体设计原则及对应实现。** 平台约束和降级机制见第 6、7、10 章；运动失效安全见第 11 章。
 
 ### 4.2 龙芯主控、家属端与运动 MCU 协同架构
 
+主控集中维护提醒、关怀、设置和设备状态，接收触摸、语音、视觉及家属端意图，协调摄像头、音频与媒体会话，并由 MotionService 输出受限运动命令。Family Desktop 作为受控局域网内的远程入口，与老人端共享主控业务状态；写入以设备成功响应为准，实时画面和远控各由短时会话承载。Motion MCU 独立维护底盘、头部、编码器和 IMU 的实时状态，并以 `STATUS` 向主控反馈执行结果。三者形成从意图、决策到执行反馈的闭环。
+
+```mermaid
+flowchart LR
+    F["Family Desktop<br/>状态·提醒·通话·AI 视野·远控"] <-->|"局域网 FamilyLink<br/>HTTP 业务 / WebSocket 实时"| FL
+    X["外部 AI / Weather Provider"] <-->|"互联网 HTTP"| PA
+    subgraph L["LoongArch 2K0300 主控 · LongPet"]
+        UI["适老 UI / 本地业务"]
+        VO["Voice / Media"]
+        VI["Vision / TargetObservation"]
+        FL["FamilyLink"]
+        PA["Provider Adapter"]
+        MS["MotionService<br/>模式与控制权仲裁"]
+        FL --> UI
+        PA --> VO
+        PA --> UI
+        VO --> UI
+        VI --> MS
+        FL --> MS
+        UI --> MS
+    end
+    CAM["Camera"] --> VI
+    AUD["Mic / Speaker"] <--> VO
+    DISP["Display / Touch"] <--> UI
+    MS <-->|"UART 命令 / STATUS"| M["ESP32-S3 Motion MCU<br/>校验·租约·故障保护"]
+    M --> ACT["电机 / 舵机"]
+    SEN["编码器 / IMU"] --> M
+```
+
+**图 4-1 LongPet 系统总体架构。** FamilyLink 统一承接家属端业务请求，MotionService 集中管理进入 UART 的运动意图；外部 AI 和天气作为信息服务接入。各主体按职责协作，执行器控制始终经过主控策略与 MCU 校验。
+
+自动视觉跟随沿同一闭环运行：人物观测经过时效与模式判断后，由主控生成 `TARGET` 或 `FOLLOW_MOVE`；MCU 根据当前安全状态执行或拒绝，并反馈结果。统一的控制路径让人工远控与自动跟随共用模式和停车规则。协同细节见第 7、8、11 章。
+
 ### 4.3 系统功能架构
+
+产品能力分为老人端基础服务、AI 语音、视觉感知、家庭连接、媒体通信和运动执行六个领域。基础服务提供陪伴界面、提醒、今日关怀、天气及设备状态，语音与家属端复用同一业务规则。视觉共享摄像头采集和有效人物观测，供 AI 视野、自动跟头及人物跟随使用；通话按会话协调相机和音频，并处理与视觉及自动运动的资源冲突。运动域统一仲裁人工与自动控制，使多种交互入口保持一致的执行规则。
+
+```mermaid
+flowchart TB
+    E["老人：触摸 / 本地语音"] --> CARE["老人端基础服务<br/>陪伴·提醒·今日关怀·天气·状态"]
+    E --> VOICE["AI 语音<br/>本地 KWS·在线对话·受限工具·离线快捷"]
+    FAMILY["家属：Family Desktop"] --> HOME["家庭连接<br/>状态·提醒与设置·模式·远控会话"]
+    VOICE --> CARE
+    HOME --> CARE
+    CAMERA["Camera"] --> VISION["视觉感知<br/>人物检测·连续跟踪·有效观测"]
+    VISION --> VIEW["AI 视野"] --> FAMILY
+    VISION --> AUTO["自动跟头 / 人物跟随策略"]
+    FAMILY <--> CALL["音视频通话<br/>会话·相机·音频"]
+    E <--> CALL
+    HOME --> MOTION["运动执行<br/>Head·Manual·Follow·Safety"]
+    AUTO --> MOTION
+    MOTION --> MCU["Motion MCU"]
+```
+
+**图 4-2 系统功能架构。** 六个能力域通过共享业务服务、视觉观测和受控运动入口协作。运动模式、权限及停止条件由运动域与 MCU 共同约束；产品场景见第 8 章。
 
 ### 4.4 物理架构与硬件连接概览
 
+物理上，2K0300 主控连接显示与触摸、摄像头、麦克风与扬声器以及网络接口，负责人机交互、感知处理和上层通信。ESP32-S3 通过双向 UART 与主控连接，管理头部舵机、四轮底盘驱动、编码器和 IMU，承担实时运动执行与传感器状态采集。两处理器通过受约束的命令和状态协作：主控处理图像与策略，MCU 专注实时执行和安全保护。
+
+```mermaid
+flowchart LR
+    subgraph DEVICE["LongPet 设备本体"]
+        DISP["显示 / 触摸"] <--> SOC["龙芯 2K0300 主控"]
+        CAM["摄像头"] --> SOC
+        MIC["麦克风"] --> SOC
+        SOC --> SPK["扬声器"]
+        SOC <-->|"双向 UART"| MCU["ESP32-S3"]
+        MCU --> SERVO["头部舵机"]
+        MCU --> DRIVER["电机驱动"] --> WHEEL["四轮底盘"]
+        ENCODER["编码器"] --> MCU
+        IMU["IMU"] --> MCU
+    end
+    SOC <-->|"网络"| LAN["家庭局域网 / 外部服务"]
+```
+
+**图 4-3 系统物理组成与连接边界。** 主控与 MCU 的 UART 分工降低了上层任务波动对实时运动控制的影响。供电、接口、电气参数与引脚见第 5 章和附录 D；运动机构与安全行为见第 11 章。
+
 ### 4.5 部署架构与网络边界
+
+系统部署覆盖设备本地、受控家庭局域网和互联网第三方服务。主控的 Linux / Hybrid Rootfs 承载 Qt6 LongPet 应用、本地 SQLite、KWS、ONNX Runtime、Vision、FamilyLink 及媒体组件；Family Desktop 在家属 PC 上通过局域网访问设备；Motion MCU 运行独立固件，通过 UART 与主控通信。ASR、LLM、TTS 和天气由主控按需调用外部 Provider。Buildroot 构建与 Hybrid Rootfs 合并在交付阶段完成，运行时由设备本地系统承载应用。
+
+```mermaid
+flowchart LR
+    subgraph LOCAL["设备本地"]
+        OS["2K0300 · Linux / Hybrid Rootfs"] --> APP["LongPet Qt 应用<br/>业务·FamilyLink·媒体"]
+        OS --> AI["KWS · ONNX Runtime · Vision"]
+        APP <--> DB[(SQLite / 配置)]
+        APP <-->|"UART"| FW["ESP32-S3 固件"]
+    end
+    subgraph LAN["受控家庭局域网"]
+        PC["Family Desktop · 家属 PC"]
+    end
+    subgraph INTERNET["互联网第三方"]
+        PROVIDER["ASR / LLM / TTS"]
+        WEATHER["Weather Provider"]
+    end
+    PC <-->|"FamilyLink HTTP / WS"| APP
+    APP <-->|"Provider HTTP"| PROVIDER
+    APP <-->|"天气 HTTP"| WEATHER
+    AI --> APP
+```
+
+**图 4-4 系统部署与网络边界。** 本地服务、家庭协作和第三方能力分层部署，便于分别管理运行资源、连接权限和服务故障。
+
+FamilyLink 采用配置式连接，远程监听要求 Bearer Token，当前 HTTP/WS 面向受控局域网；跨不可信网络部署需增加安全传输或可信中转。网络中断时，已设提醒在本机时钟可信的前提下仍可触发，本地设置、KWS 快捷动作和已配置的陪伴音频继续可用；开放式对话、天气更新及家属远程连接则按各自网络状态反馈。平台组成见第 6 章，鉴权与数据时效见第 10 章。
 
 ### 4.6 软件分层架构
 
+主程序启动时由 Application 组装依赖，运行时沿“表示—控制—业务 Service—Port/Repository—Adapter—系统能力”处理请求。本地触摸经 AppController、家属请求经 FamilyLinkController/FamilyLinkService、语音工具经参数校验后进入相应业务 Service。Repository 管理提醒等持久数据，Port/Adapter 封装设备与网络实现，MotionService 集中接收运动意图。这种分层使多种入口复用业务规则，也便于更换外部 Provider 和板端适配实现。
+
+```mermaid
+flowchart TB
+    UI["Presentation<br/>Qt 页面 / 家属端显示"] --> CT["Controller<br/>本地流程 / FamilyLink 远程入口"]
+    CT --> SV["Business & Application Services<br/>提醒·关怀·语音·视觉·媒体·运动"]
+    SV --> PR["Ports / Repositories<br/>能力契约 / 持久化契约"]
+    PR --> AD["Adapters / Providers<br/>设备·HTTP·WebSocket·SQLite·UART"]
+    AD --> EXT["OS / Hardware / Network<br/>本地设备·MCU·第三方服务"]
+    OBS["TargetObservation<br/>检测/跟踪统一观测"] --> SV
+```
+
+**图 4-5 LongPet 主程序的高层软件分层。** `TargetObservation` 统一视觉观测，MotionService 统一运动入口；两者分别明确感知数据和执行权限的服务边界。对象、线程及摄像头、音频的资源协调见第 7 章。
+
 ### 4.7 四个工程仓库的职责划分
+
+四个工程按交付物和运行位置分工：系统工程提供主控软件底座，其他三个工程分别交付主控应用、家属端应用和 MCU 固件。跨工程变化通过接口契约协调，再由各工程独立实现，便于明确责任、版本依赖和联调范围。
+
+| 工程 | 核心职责与交付物 | 运行/作用位置 | 与其他工程的边界 |
+| --- | --- | --- | --- |
+| LongPet 主程序 | 适老 UI、本地业务、AI/视觉、FamilyLink、媒体与 MotionService；交付主控应用及部署配置 | 2K0300 主控 | 对 Family Desktop 提供 FamilyLink；经 UART 向 MCU 提交运动意图；依赖系统工程的运行环境 |
+| Family Desktop | 家属状态查看、提醒与设置、音视频通话、AI 视野、模式选择和人工远控；交付 PC 应用 | 家属 PC | 经 FamilyLink 读写主控业务状态，建立媒体与控制会话；设备数据和运动执行分别由主控、MCU 管理 |
+| Motion MCU | UART 协议、模式/参数校验、电机和舵机控制、编码器 PID、IMU 反馈、租约与故障停车；交付 ESP32-S3 固件 | ESP32-S3 | 接受主控约束命令并返回 STATUS；独立决定是否执行和何时停车 |
+| Buildroot / LoongArch 系统工程 | 交叉构建 Qt、Python、AI/媒体运行时，生成 SDK/target 并按清单形成 Hybrid Rootfs | 构建机；产物部署到 2K0300 | 提供兼容的系统与运行库；产品业务状态由主程序管理，运动执行由 MCU 管理 |
+
+**表 4-2 四个工程的职责与交付边界。** 系统构建依据见第 6 章，应用分层见第 7 章，接口见第 10 章及附录 B，固件安全见第 11 章。
 
 ### 4.8 功能模块与物理模块映射
 
+产品功能由多个物理主体协作完成。表 4-3 区分主控的业务决策与状态管理、家属端的交互呈现，以及 MCU 的实际运动执行；AI 视野在家属端绘框，运动动作由 MCU 落地。
+
+| 产品功能 | LoongArch 主控 | 摄像头 / 音频 / 显示 | Family Desktop | Motion MCU |
+| --- | --- | --- | --- | --- |
+| 适老交互、提醒与今日关怀 | UI、业务校验、SQLite 与提醒调度 | 触摸显示、提示音 | 查看与管理同一设备状态 | — |
+| 在线语音与离线快捷 | KWS、会话、工具校验与 Provider 接入 | 麦克风、扬声器 | — | — |
+| 人物感知与 AI 视野 | Detector/Tracker、`TargetObservation` 与画面传输 | 摄像头共享采集 | 接收画面、观测并绘框 | — |
+| 自动跟头 / 人物跟随 | 目标时效、策略、模式与控制权仲裁 | 摄像头提供人物位置 | 模式选择与状态查看 | 舵机/底盘执行及安全裁决 |
+| 音视频通话 | 呼叫状态、媒体会话与资源协调 | 摄像头、麦克风、扬声器 | 呼叫对端与媒体收发 | — |
+| 人工远控 | 会话鉴权、命令仲裁与状态反馈 | 显示本地状态 | 按住控制、松开停车 | 校验命令、执行并按租约停车 |
+| 天气与设备状态 | Provider 更新、缓存与状态汇聚 | 状态栏显示 | 读取设备状态 | 返回运动状态和故障信息 |
+
+**表 4-3 产品功能与物理主体映射。** “—”表示该功能无直接职责；外部 AI 和天气 Provider 的参与见图 4-4。功能行为见第 8 章，硬件与运行时接口见第 10 章。
+
 ### 4.9 主要数据流与控制流
 
+数据流传递观测、业务记录与执行反馈，控制流传递操作意图、模式切换和运动命令。服务层将两者关联并完成校验：带时效的人物框经策略与权限判断后才形成 `FOLLOW_MOVE`，家属端按键也须由有效远控会话接收。表 4-4 汇总四条核心链路。
+
+| 链路 | 数据流 | 控制流与失效边界 |
+| --- | --- | --- |
+| 语音 | 麦克风 → VAD/KWS 事件；在线会话录音 → ASR 文本 → LLM 结果 → TTS 音频/文字 → 扬声器与界面 | 唤醒或触摸开启会话；Tool Calling 经参数校验调用本地业务 Service；Provider 超时、取消或旧 session 回调不更新新会话，离线快捷能力独立保留。 |
+| 视觉 | 摄像头最新帧 → Tinyissimo Detector / LK Tracker → 带时间戳与新鲜度的 `TargetObservation` → AI 视野、自动跟头/跟随策略 | AI 视野只传画面和观测；策略在目标有效、模式与 MCU 状态满足条件时，经 MotionService 生成 `TARGET`/`FOLLOW_MOVE`；目标失效不沿用旧框。 |
+| 家庭与媒体 | 主控业务快照 ↔ FamilyLink REST ↔ Family Desktop；独立 WebSocket 传 AI 视野 JPEG/观测、通话 JPEG/PCM 与远控状态 | 家属写入以设备确认和 revision 为准；HTTP 建立短时会话，WS 承载实时操作；断连使画面、通话或远控会话分别失效。 |
+| 运动 | MCU `STATUS`/故障/头偏 → MotionService → 家属端与视觉策略 | 本地/家属/视觉意图 → MotionService 仲裁 → UART `MODE`、`MOVE`、`HEAD`、`TARGET`、`FOLLOW_MOVE` 或 `STOP` → MCU 校验执行；租约或链路到期由 MCU 停车。 |
+
+**表 4-4 主要数据流、控制流与失效边界。** 提醒、关怀和设置的持久数据由本地触摸、语音工具和家属端共用业务 Service 写入 SQLite；会话、天气快照、视觉及运动状态按各自时效在运行期管理，见第 10 章。
+
+```mermaid
+flowchart LR
+    MIC["Mic"] --> KWS["VAD / KWS"] --> VO["Voice 会话"] --> CLOUD["ASR / LLM / TTS"] --> TOOL["回答 / 受限 Tool"] --> BIZ["本地业务 / Speaker"]
+    CAM["Camera"] --> DET["Detector / Tracker"] --> OBS["TargetObservation"] --> VIEW["AI 视野"] --> FAMILY["Family Desktop"]
+    OBS --> STRATEGY["跟头 / 跟随策略"] --> MOTION["MotionService"]
+    FAMILY <-->|"FamilyLink 业务 / 会话"| BIZ
+    FAMILY -->|"人工控制意图"| MOTION
+    MOTION -->|"UART 命令"| MCU["Motion MCU"] --> ACT["Servo / Motors"]
+    MCU -."STATUS / fault".-> MOTION
+```
+
+**图 4-6 主要数据流与控制流。** 主控汇集语音、视觉和家属端输入，统一仲裁运动意图；MCU 反馈执行状态。观测与状态沿数据链路更新，受控命令沿控制链路执行。接口和安全时效见第 10、11 章及附录 B。
+
 ### 4.10 核心技术路线与选型原则
+
+LongPet 围绕单核 LoongArch 平台的资源条件组合本地基础能力、按需接入的在线 Provider、家属端协作和独立 MCU 执行。由此，设备可同时提供触摸交互、语音入口、人物感知与家庭连接；外部服务或感知模块异常时，各能力按自身状态反馈和降级。表 4-5 汇总关键选型及对应依据。
+
+| 技术路线 | 总体取舍及产品作用 | 详细依据 |
+| --- | --- | --- |
+| 2K0300 + Hybrid Rootfs | 以 LoongArch 主控承载本地 UI、业务和感知；保留已验证的板端基础系统，按清单合入 Buildroot 用户空间，控制 ABI/ISA 与系统稳定性风险。 | 第 6 章 |
+| ONNX Runtime 标量路径 | 在无 LSX/LASX 的目标 CPU 上统一语音与视觉推理运行时，既检查可加载性，也验证数值正确性。 | 第 6、9 章 |
+| Tinyissimo + Tracker | 轻量人物检测负责搜索与纠偏，跟踪负责帧间位置更新，适应单核上 KWS 与 Vision 并发；单人物板端测试的目标位置更新约为 7～9 Hz。上层统一消费 `TargetObservation`。 | 第 7、9 章，表 9-7 |
+| 本地 KWS + 在线 AI + 离线基础陪伴 | 本地识别提供唤醒与受限快捷动作，联网 Provider 支持开放式 ASR/LLM/TTS 对话；提醒和本地入口可在网络中断时继续使用。 | 第 7—9 章 |
+| 独立 Provider 与业务 Port | ASR、LLM、TTS、天气分别配置和处理失败；AI 工具只能调用经过校验的本地业务能力，便于部署切换并限制外部结果权限。 | 第 7、10 章 |
+| 老人端 + Family Desktop 分工 | 老人端保持低操作复杂度；家属端通过 FamilyLink 参与管理、通话和协助，两端以设备业务状态为准。 | 第 7、8、10 章 |
+| 主控策略 + ESP32-S3 安全执行 | MotionService 汇总人工和自动控制，MCU 独立校验模式、命令、租约与故障；Linux、网络或视觉中断时按时效规则停车。 | 第 10、11 章 |
+
+**表 4-5 核心技术路线与总体选型依据。** 本地能力、可替换 Provider、共享感知和独立运动执行共同支撑产品功能与部署灵活性。
 
 ## 5 硬件系统设计
 
