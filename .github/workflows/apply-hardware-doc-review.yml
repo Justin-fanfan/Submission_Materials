@@ -1,0 +1,233 @@
+name: Apply hardware documentation review
+
+on:
+  push:
+    branches:
+      - review-ch5-appendix-d
+
+permissions:
+  contents: write
+
+jobs:
+  patch-document:
+    if: github.actor != 'github-actions[bot]'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: review-ch5-appendix-d
+          fetch-depth: 0
+
+      - name: Refine chapter 5 and appendix D
+        shell: bash
+        run: |
+          python3 - <<'PY'
+          from pathlib import Path
+          import re
+
+          path = Path('LongPet_产品设计文档.md')
+          text = path.read_text(encoding='utf-8')
+
+          def replace_block(start, end, replacement):
+              global text
+              pattern = re.escape(start) + r'.*?(?=\n' + re.escape(end) + r')'
+              new_text, count = re.subn(pattern, replacement.rstrip(), text, count=1, flags=re.S)
+              if count != 1:
+                  raise SystemExit(f'failed to replace block: {start!r} -> {end!r}, count={count}')
+              text = new_text
+
+          text = text.replace('| 文档版本 | V0.8（编写中） |', '| 文档版本 | V0.9（编写中） |', 1)
+          marker = '| V0.8 | 2026-09-14 | 完成第 5 章硬件系统设计与附录 D 硬件连接摘要 |'
+          if marker not in text:
+              raise SystemExit('revision marker not found')
+          text = text.replace(marker, marker + '\n| V0.9 | 2026-09-14 | 审校第 5 章与附录 D：收敛硬件/软件边界，修正 Motion MCU FOLLOW 基线，补充 LCD FPC 与设备节点信息 |', 1)
+          text = text.replace('    - D.7 USB 外设与系统设备节点', '    - D.7 系统设备节点与 USB 外设', 1)
+
+          replace_block(
+              '## 5 硬件系统设计',
+              '### 5.1 硬件总体组成',
+              '''## 5 硬件系统设计
+
+本章说明当前原型的硬件组成、物理连接、供电域、关键选型及工程边界。硬件规格以龙芯 2K0300 先锋派产品规格书、当前装机实物和板端枚举为依据；运动侧以 Motion MCU 当前 `main` 固件及其协议/台架文档为实现依据；主控外设工作点以 LongPet 当前部署配置和板端验证记录为依据。具体 UART 命令、模式、租约和故障语义见第 10、11 章，具体引脚与系统节点见附录 D。本章不重复软件协议实现，也不把尚未标定或尚缺独立证据的系统能力写成硬件已完成结论。''')
+
+          replace_block(
+              '### 5.2 龙芯 2K0300 主控平台',
+              '### 5.3 显示与触摸模块',
+              '''### 5.2 龙芯 2K0300 主控平台
+
+主控采用龙芯 2K0300 先锋派。当前板卡配置为单核 LA264、主频 1 GHz、512 MB DDR4、8 GB eMMC，并以 2 MB SPI NOR Flash 保存启动固件。开发板还提供 4 路 USB 2.0 Host、千兆 RJ45、24 位 RGB LCD、TF、RTC 和 40 PIN 扩展接口；扩展接口可复用 UART、I2C、SPI、CAN 与 PWM。板卡标称通过 Type-C 接受 5 V/2 A 输入。
+
+LongPet 实际使用 USB 连接摄像头、USB 音频和 Wi-Fi，使用 RGB/I2C 连接显示与触摸，并通过 UART2 与运动 MCU 通信。主控承担 Qt 图形界面、音视频、人物感知、网络服务和本地数据管理。单核 CPU 与有限内存是轻量视觉模型、最新帧处理、共享摄像头和独立运动 MCU 架构的重要硬件约束；软件侧资源调度与 LoongArch 适配见第 6、7、9 章。''')
+
+          replace_block(
+              '### 5.3 显示与触摸模块',
+              '### 5.4 摄像头模块',
+              '''### 5.3 显示与触摸模块
+
+显示采用正点原子 7 英寸 IPS RGB LCD，物理分辨率 1024×600，面板接口为 24 位 RGB；模块资料标称支持 I2C 电容触摸和最多 5 点同时触摸。板端实际识别为 Goodix Capacitive TouchScreen，framebuffer 也工作在 1024×600，因此屏幕规格、显示输出和触摸输入已经形成实机闭环。
+
+该模块直接服务老人端的大按钮、浅层导航和状态反馈。Linux 设备节点与 Qt 平台参数属于部署实现，集中列于附录 D.7；40 PIN FPC 的 RGB、同步、背光和触摸信号摘要见附录 D.6。''')
+
+          replace_block(
+              '### 5.4 摄像头模块',
+              '### 5.5 麦克风与音频输出模块',
+              '''### 5.4 摄像头模块
+
+当前原型采用基于 OV2735 图像传感器的 200 万像素 USB UVC 摄像头，使用 2.8 mm 镜头，商品资料给出的视场角约为 100°。板端由标准 `uvcvideo` 驱动识别；当前产品采集工作点为 640×480 MJPEG、30 FPS，设备本身还支持 1920×1080 MJPEG、30 FPS 等模式。后者属于摄像头能力上限，不代表 LongPet 在 1080P 上运行视觉推理。
+
+摄像头在当前机构中倒装，画面方向由系统配置统一校正。LongPet 的 Vision、AI 视野与视频通话复用同一采集源，减少 USB 与单核 CPU 上的重复采集负担。设备标识、节点和当前采集配置见附录 D.7；共享资源与媒体协调见第 7、8 章。''')
+
+          replace_block(
+              '### 5.5 麦克风与音频输出模块',
+              '### 5.6 网络通信模块',
+              '''### 5.5 麦克风与音频输出模块
+
+语音输入采用 3.5 mm 桌面麦克风，输出采用联想有线桌面音箱；两者通过同一块 C-Media USB Audio Device 接入龙芯主控。板端已经同时枚举录音和播放能力，满足 KWS、在线语音、TTS 播放和音视频通话的双向音频需求。当前原型没有额外外置功放。
+
+开发板板载 ES8388 音频器件不作为当前正式产品音频链路，避免把已停用的板载 codec 与实际 USB 音频路径混写。ALSA 名称、PCM 节点和运行时选择属于部署接口信息，集中列于附录 D.7 和第 10.5 节。''')
+
+          replace_block(
+              '### 5.6 网络通信模块',
+              '### 5.7 ESP32-S3 运动控制模块',
+              '''### 5.6 网络通信模块
+
+当前主要网络通道为开发板配套的 USB Wi-Fi，实机枚举为 Realtek `0bda:f179`，Linux 接口为 `wlan0`。它承担 FamilyLink 家庭局域网通信以及在线 AI、天气等外部服务访问。2K0300 板载千兆 RJ45 保留为有线网络能力，但不是当前原型的主要联网方式。
+
+Wi-Fi 驱动探测失败时的恢复服务、NetworkManager 状态管理和网络降级属于系统软件设计，见第 6、10 章；本章仅界定实际使用的网络硬件。''')
+
+          replace_block(
+              '### 5.7 ESP32-S3 运动控制模块',
+              '### 5.8 电机、驱动、编码器与 IMU',
+              '''### 5.7 ESP32-S3 运动控制模块
+
+运动控制板基于 ESP32-S3-WROOM 系列模组，实物丝印为 `ESP32S3WROOMR8N2`，当前固件编译目标为 `ESP32S3 Dev Module`。由于没有可核对的完整开发板型号，本设计不从丝印进一步推断 Flash、PSRAM 或板级稳压规格。
+
+ESP32-S3 通过 `Serial1` 与龙芯 UART2 双向通信，链路参数为 115200 baud、8N1、无流控。主控负责人物感知、远控接入和运动意图，MCU 负责 PWM/方向输出、编码器反馈、IMU 航向反馈以及独立的停车保护，使 Linux 侧任务抖动不会直接变成无时限的电机输出。
+
+当前 Motion Protocol V2 支持 `SAFE`、`HEAD_ONLY`、`MANUAL` 和 `FOLLOW` 四类控制模式；其中 FOLLOW 底盘动作由主控显式发送、具有独立租约的 `FOLLOW_MOVE` 驱动，`TARGET` 本身不按框面积直接驱动车轮。模式权限、500 ms 级时效和故障语义属于运动安全设计，统一见第 10.2 与第 11 章，不在硬件章节重复展开。''')
+
+          replace_block(
+              '### 5.9 头部舵机机构',
+              '### 5.10 电源、存储与外部接口',
+              '''### 5.9 头部舵机机构
+
+头部采用宏科 20 kg 扭力、5 V 舵机，由 ESP32-S3 输出控制信号。当前固件以约 1570 μs 为中心位置，并将软件脉宽限制在 870～2270 μs；实机已经确认左右转动和回中可用，机构机械总活动范围约 120°。
+
+软件脉宽范围只用于限制控制输出，不等同于机械角度的精确标定值。最终产品仍需结合头部结构、线束余量和长期运行负载确定安全机械边界；信号及供电关系见附录 D.5。''')
+
+          replace_block(
+              '### 5.11 硬件连接关系与信号边界',
+              '### 5.12 关键物料选型依据',
+              '''### 5.11 硬件连接关系与信号边界
+
+LongPet 将高算力感知与实时执行分成两个电气边界。龙芯侧直接连接显示/触摸、摄像头、USB 音频和网络，只通过双向 UART 与 ESP32-S3 交换高层运动命令、状态和诊断；电机 PWM、方向、STBY、编码器、IMU 和舵机信号均留在 MCU 一侧。这样既减少 Linux 对实时执行时序的直接依赖，也使底盘在主控链路异常时仍能由 MCU 撤销输出。
+
+UART 必须 TX/RX 交叉并保持共地。`/dev/ttyS2`、`/dev/video0`、ALSA `CARD=Device` 和 `/dev/input/event0` 等名称属于当前部署枚举，系统升级、拔插或设备树变化后需重新核对，不能把设备节点当作固定物理接口编号。当前供电、安全保护和装配方面的未完成项集中列于第 5.13 节，具体引脚与节点见附录 D。''')
+
+          replace_block(
+              '### 5.12 关键物料选型依据',
+              '### 5.13 当前硬件限制与工程化缺口',
+              '''### 5.12 关键物料选型依据
+
+| 物料/方案 | 选型理由 | 当前作用与边界 |
+| --- | --- | --- |
+| 龙芯 2K0300 先锋派 | LoongArch 主控、板载显示/USB/网络/存储接口完整，可承载 Linux 与 Qt 应用 | 承担界面、业务、语音、视觉和网络；单核 1 GHz 与 512 MB 内存要求控制资源预算 |
+| 7 英寸 RGB + 电容触摸 | 1024×600 大尺寸本地交互，接口与 2K0300 RGB/I2C 资源匹配 | 老人端主要交互界面；当前实机为 Goodix 触摸 |
+| OV2735 UVC 摄像头 | 使用标准 USB Video Class，Linux 侧接入简单，兼顾视觉与视频通话 | 当前产品以 640×480 MJPEG@30 工作；1080P@30 是设备能力而非视觉推理工作点 |
+| C-Media USB 音频 + 3.5 mm 麦克风/音箱 | 录音、播放统一经标准 USB Audio 链路，绕开当前未采用的板载 codec | 支撑 KWS、语音交互和通话；无外置功放 |
+| ESP32-S3 + 两块 TB6612 | 将电机、舵机、编码器和 IMU 的实时执行从 Linux 主控分离 | 负责四轮与头部实时控制和停车保护；完整控制语义见第 11 章 |
+| 四路编码器 + MPU6500-compatible | 为轮速与航向提供闭环反馈 | IMU 已实机可用；编码器计数到物理速度/距离仍需标定 |
+| 3S 18650 + LM2596 分路供电 | 满足移动原型的电池供电和 5 V 执行器需求 | 当前主控另用独立 5 V 充电宝以提高高负载稳定性；后续应重构正式电源树 |
+
+**表 5-1 关键硬件选型与当前边界。** 本表说明设计取舍，不替代器件数据手册、电气额定值和最终量产 BOM。''')
+
+          replace_block(
+              '### 5.13 当前硬件限制与工程化缺口',
+              '## 6 LoongArch 系统软件平台设计',
+              '''### 5.13 当前硬件限制与工程化缺口
+
+| 项目 | 当前事实 | 后续工程化或验收工作 |
+| --- | --- | --- |
+| 主控供电 | 主控共用现有 LM2596 路径时高 CPU 负载下稳定性不足，当前改用独立 5 V 充电宝 | 重新划分主控/电机/舵机电源域，实测启动与满载瞬态、电压跌落和电流裕量，补充滤波、储能和过流保护；在缺少测量前不预断故障根因 |
+| 电池管理 | 3S 18650 电池包容量 3000 mAh，已知具备过充、过放保护；充电管理和保护板细节未形成完整设计资料 | 补充充电接口、保险/熔断、线束额定值、电量检测和安全验证 |
+| 横向平移 | 前进、后退和原地左右旋转实机正常，左右平移仍有问题并暂缓 | 核查麦克纳姆轮安装、A/B/C/D 物理通道映射、编码器符号和 shift 轮速组合 |
+| 运动量标定 | TT 电机为 1:48 减速、60 mm 车轮，编码器商品标称“13 线” | 实测输出轴计数分辨率、轮速、线速度、转角误差和停车距离；不要把“13 线”直接写成输出轴 13 PPR/CPR |
+| 硬件安全 | MCU 具备超时停车和 TB6612 STBY 撤销能力 | 软件保护不能替代物理急停、驱动默认禁能、外部 STBY 下拉、独立限流/保险和可靠电源切断路径 |
+| 跟随与并发 | 当前固件和主控已经具备 `FOLLOW_MOVE`、目标跟头和独立租约接口；系统级人物跟随、舵机与底盘并发的最终结论应由第 11 章和正式测试报告统一给出 | 发布前保证设计文档、正式测试报告与 MCU 固件版本一致，避免把接口存在等同于全部场景已完成硬件标定 |
+| 传感器与机构 | DHT22 已安装但未进入正式业务；舵机机械总活动范围约 120° | 视产品需求接入温湿度业务，并完成舵机极限、轮速和机构长期可靠性标定 |
+| 装配与线束 | 当前已有接口/引脚摘要，但尚缺完整整机线束图、安装尺寸和正式原型实拍 | 发布版补充整机与内部布局实拍、线束和固定方式；商品页截图只用于选型核对，不作为正式原型实拍 |
+
+**表 5-2 当前硬件限制与工程化缺口。** 本表区分“器件/接口已经存在”“单项实机可用”和“系统级完成验收”三个层次；完整运动安全证据统一见第 11 章及正式测试报告。''')
+
+          replace_block(
+              '### 附录 D 硬件连接与引脚摘要',
+              '#### D.1 龙芯主控外设连接摘要',
+              '''### 附录 D 硬件连接与引脚摘要
+
+本附录面向当前 LongPet 原型，用于接线复核、部署排查和后续线束固化。MCU GPIO 以 Motion MCU 当前 `main` 的 `xiao_che/xiao_che.ino` 与 `docs/firmware-baseline.md` 为准；龙芯设备节点以当前 LongPet 部署配置和板端枚举为准；LCD FPC 信号按龙芯 2K0300 先锋派产品规格书整理。这里的 GPIO、设备节点和逻辑通道均不能替代开发板丝印核对、通断测试和最终电气图纸。''')
+
+          replace_block(
+              '#### D.6 显示与触摸接口摘要',
+              '#### D.7 USB 外设与系统设备节点',
+              '''#### D.6 显示与触摸接口摘要
+
+7 英寸 IPS 屏为 1024×600、24 位 RGB 面板，触摸为 I2C 电容触摸，板端实机识别为 Goodix。当前 framebuffer 工作在 1024×600，Linux 缓冲区的 32 位像素格式只表示内存存储格式，不应与面板 24 位 RGB 总线宽度混同。
+
+2K0300 先锋派规格书给出的 40 PIN LCD FPC 信号分组如下：
+
+| FPC 引脚 | 信号 | 说明 |
+| --- | --- | --- |
+| 1–2 | VCC | 5 V 电源 |
+| 3–10 | R0–R7 | 红色 8 位数据 |
+| 11 | GND | 地 |
+| 12–19 | G0–G7 | 绿色 8 位数据 |
+| 20 | GND | 地 |
+| 21–28 | B0–B7 | 蓝色 8 位数据 |
+| 29 | GND | 地 |
+| 30 | CLK | 像素时钟 |
+| 31 | HSYNC | 行同步 |
+| 32 | VSYNC | 场同步 |
+| 33 | LCD_EN | 数据使能 |
+| 34 | LCD_BL | 背光控制 |
+| 35 | CT_RST | 电容触摸复位 |
+| 36 | CT_SDA | 电容触摸 I2C SDA |
+| 37 | NC | 未连接 |
+| 38 | CT_SCL | 电容触摸 I2C SCL |
+| 39 | CT_INT | 电容触摸中断 |
+| 40 | RESET | LCD 复位，低电平有效 |
+
+**表 D-6 2K0300 先锋派 LCD FPC 信号摘要。** 该表用于接口核对；具体排线方向、连接器 Pin 1 朝向和屏幕模块兼容性仍应按实物与厂商资料确认。''')
+
+          replace_block(
+              '#### D.7 USB 外设与系统设备节点',
+              '#### D.8 电源与共地关系',
+              '''#### D.7 系统设备节点与 USB 外设
+
+| 外设 | 当前识别/节点 | 应用工作点及注意事项 |
+| --- | --- | --- |
+| 摄像头 | USB `1bcf:2281`，UVC，`/dev/video0` | 当前 640×480 MJPEG@30；设备支持 1920×1080 MJPEG@30；物理倒装，系统统一做 180°方向校正 |
+| USB 音频 | C-Media `0d8c:0014`，ALSA `CARD=Device` | 录放均使用该 USB 声卡；当前麦克风与音箱通过 3.5 mm 接入 |
+| USB Wi-Fi | Realtek `0bda:f179`，`wlan0` | 当前主要联网接口；驱动/恢复策略见第 6 章 |
+| 板载以太网 | `eth0` | 具备千兆 RJ45 能力；当前不是主要联网方式 |
+| 显示 | `/dev/fb0` | 1024×600 framebuffer；面板为 24 位 RGB |
+| 触摸 | Goodix，`/dev/input/event0` | I2C 电容触摸；事件节点以最终枚举为准 |
+| Motion UART | `/dev/ttyS2` | 当前部署对应龙芯 UART2；设备树变更后需复核 |
+| 板载 eMMC | `/dev/mmcblk0`，当前根分区 `/dev/mmcblk0p1` | 标称 8 GB；当前系统枚举容量约 7.3 GiB，ext4 根分区 |
+
+**表 D-7 当前系统设备节点与外设枚举。** USB VID:PID、设备节点和 ALSA 名称来自当前原型实机枚举；拔插顺序、系统镜像或设备树变化后须重新核对。''')
+
+          path.write_text(text, encoding='utf-8')
+          PY
+
+      - name: Commit reviewed document
+        shell: bash
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add LongPet_产品设计文档.md
+          if git diff --cached --quiet; then
+            echo "No document changes generated"
+            exit 1
+          fi
+          git commit -m "docs: refine hardware chapter and appendix D"
+          git push origin HEAD:review-ch5-appendix-d
