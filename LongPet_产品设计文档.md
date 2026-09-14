@@ -487,7 +487,7 @@ LongPet 面向老人日常操作、事项提醒和家庭联系需求，提供本
 | ID | 需求 | 优先级 | 验收口径 | 对应设计章节 |
 | --- | --- | --- | --- | --- |
 | NFR-SAFE-01 | 产品应在运动控制失效时优先停车，并明确区分驱动已撤销、故障限制和机构仍带电的状态。 | P0 | FR-MOTION 所列失效条件下底盘撤销驱动，严重故障保持动作限制；停止状态不被表述为整机断电或已满足未经标定的物理停距。 | 5.13、11.1—11.11、D.9 |
-| NFR-SEC-01 | 系统应对远程访问鉴权，远程监听缺少长期令牌时拒绝启用；媒体、视野及远控短时会话不得跨用途授权。 | P0 | 缺少或错误凭据不能取得数据流或运动权；失效及错用途会话不能接入。 | 7.8、10.3、10.9、B.3 |
+| NFR-SEC-01 | 系统应对远程访问鉴权，FamilyLink 对外监听缺少长期令牌时拒绝启用；媒体、视野及远控短时会话不得跨用途授权。 | P0 | 缺少或错误凭据不能取得数据流或运动权；失效及错用途会话不能接入。 | 7.8、10.3、10.9、B.3 |
 | NFR-SEC-02 | 系统应将 AI 工具限定于当前允许的业务动作，不接受任意命令执行或绕过运动控制权限的请求。 | P0 | 未知工具、损坏参数与取消后的工具调用被拒绝；模型输出本身不构成执行授权。 | 7.6、8.4、10.4 |
 | NFR-SEC-03 | 系统应通过受控配置管理敏感凭据，普通业务接口不得返回完整敏感凭据；家属端常规连接状态仅返回凭据存在性摘要。 | P0 | 凭据访问受配置权限约束，普通业务响应不含完整敏感凭据；家属端常规连接状态仅含凭据存在性摘要，连接输入在信息更新或重新打开弹窗后清空。 | 10.7、10.9、B.6 |
 | NFR-SEC-04 | 系统应将有限对话上下文及当前媒体、视觉、运动会话作为运行态管理，与持久提醒和照护记录区分。 | P1 | 清空或重启后不恢复旧对话和控制会话；本地提醒与真实照护记录仍按持久化规则保留。 | 10.6—10.8、B.6 |
@@ -679,7 +679,7 @@ flowchart LR
 
 **图 4-4 系统部署与网络边界。** 本地服务、家庭协作和第三方能力分层部署，便于分别管理运行资源、连接权限和服务故障。
 
-FamilyLink 采用配置式连接，远程监听要求 Bearer Token，当前 HTTP/WS 面向受控局域网；跨不可信网络部署需增加安全传输或可信中转。网络中断时，已设提醒在本机时钟可信的前提下仍可触发，本地设置、KWS 快捷动作和已配置的陪伴音频继续可用；开放式对话、天气更新及家属远程连接则按各自网络状态反馈。平台组成见第 6 章，鉴权与数据时效见第 10 章。
+FamilyLink 采用配置式连接，对外监听要求 Bearer Token，当前 HTTP/WS 面向受控局域网；跨不可信网络部署需增加安全传输或可信中转。网络中断时，已设提醒在本机时钟可信的前提下仍可触发，本地设置、KWS 快捷动作和已配置的陪伴音频继续可用；开放式对话、天气更新及家属远程连接则按各自网络状态反馈。平台组成见第 6 章，鉴权与数据时效见第 10 章。
 
 ### 4.6 软件分层架构
 
@@ -1265,7 +1265,7 @@ flowchart LR
 
 FamilyLink 将家属端请求接入设备已有的业务服务。`FamilyLinkHttpAdapter` 处理 HTTP 传输，`FamilyLinkController` 负责路由、认证和数据转换，`FamilyLinkService` 组合提醒、关怀、设置、系统状态、通话、视觉监看与运动会话能力。远程修改与本地操作共用业务校验和状态机；AI 视野、通话及远控分别由专门的媒体或运动服务处理。
 
-FamilyLink 默认绑定本机地址；配置远程监听时必须提供令牌，否则 `Application` 拒绝启用。远程读写仍通过业务服务校验，AI 视野会话由专门服务管理。
+FamilyLink 默认绑定本机地址；配置 FamilyLink 对外监听时必须提供令牌，否则 `Application` 拒绝启用。远程读写仍通过业务服务校验，AI 视野会话由专门服务管理。
 
 ### 7.9 MotionService 与运动 MCU 协同
 
@@ -1720,7 +1720,7 @@ flowchart LR
 
 ### 10.3 LongPet—Family Desktop 接口
 
-设备端 `FamilyLinkController` 在 `/api/v1` 提供状态、设置、提醒和通话快照等 HTTP/JSON 接口，并为 AI 视野和远控签发短时会话。家属端由 Electron 主进程 HTTP Adapter 发起业务请求，Renderer 通过 preload/IPC 获取结果；连接信息仅返回 `hasToken` 摘要。Token 在连接弹窗输入期间短暂经过 Renderer，后续请求由主进程持有凭据；输入状态在连接信息更新或重新打开弹窗时清空。设备端远程监听必须配置 Bearer Token，当前部署范围为受控局域网。
+设备端 `FamilyLinkController` 在 `/api/v1` 提供状态、设置、提醒和通话快照等 HTTP/JSON 接口，并为 AI 视野和远控签发短时会话。家属端由 Electron 主进程 HTTP Adapter 发起业务请求，Renderer 通过 preload/IPC 获取结果；连接信息仅返回 `hasToken` 摘要。Token 在连接弹窗输入期间短暂经过 Renderer，后续请求由主进程持有凭据；输入状态在连接信息更新或重新打开弹窗时清空。启用 FamilyLink 对外监听必须配置 Bearer Token，当前部署范围为受控局域网。
 
 ```mermaid
 flowchart LR
@@ -2245,7 +2245,7 @@ Motion MCU 固件按 ESP32-S3 配置构建并烧录，与 UART 协议和终端�
 
 ### 14.3 配置、首次启动与验收检查点
 
-首次部署依次确认显示与触摸、网络和系统时间、摄像头、音频、UART、数据库、KWS/视觉模型、LongPet 服务及 FamilyLink 可达性。AI 和天气服务、FamilyLink 凭据、设备与数据路径、Vision/Motion 开关由受控配置提供；远程监听先配置令牌。验收同时验证提醒读写、模型导入、媒体资源交接、MCU 状态及断连停车。绝对时间提醒在系统时间可信后测试。
+首次部署依次确认显示与触摸、网络和系统时间、摄像头、音频、UART、数据库、KWS/视觉模型、LongPet 服务及 FamilyLink 可达性。AI 和天气服务、FamilyLink 凭据、设备与数据路径、Vision/Motion 开关由受控配置提供；启用 FamilyLink 对外监听前先配置令牌。验收同时验证提醒读写、模型导入、媒体资源交接、MCU 状态及断连停车。绝对时间提醒在系统时间可信后测试。
 
 ### 14.4 版本基线、发布包与完整性校验
 
@@ -2267,15 +2267,15 @@ Motion MCU 固件按 ESP32-S3 配置构建并烧录，与 UART 协议和终端�
 
 LongPet 的关键技术选择围绕三项约束展开：2K0300 的算力与指令集、多人多端共享的感知和媒体资源，以及运动执行的时效安全。项目通过目标平台源码适配、轻量视觉、Hybrid Rootfs 和独立运动 MCU 将这些约束转化为可运行的产品方案。
 
-| 关键问题 | 采用方案 | 带来的能力 |
-| --- | --- | --- |
-| 指令集兼容 | 固定工具链源码构建并检查 ISA/ABI | 关键运行库适配无 LSX/LASX 的目标板 |
-| 推理数值正确性 | ONNX Runtime 标量路径与参考输出比对 | 本地模型具备板端数值验证链 |
-| 基础系统 | 稳定 BSP + 选择性 Hybrid Rootfs | 保持驱动基础稳定并补齐 Qt/AI 用户态能力 |
-| 低算力视觉 | V1.2 person-only 模型 + Detector/Tracker | 在单核平台持续提供带时效的人物位置 |
-| 语音与媒体 | 本地 KWS/离线快捷能力 + 在线 Provider + 会话仲裁 | 保留断网基本入口，并按资源状态提供开放式语音 |
-| 人物跟随 | 头身分层、远近代理与新鲜目标门控 | 在有人看护的低速场景形成受控跟随 |
-| 远程运动 | 主控授权 + MCU 独立时效与故障停车 | 断连和状态过期时撤销持续运动 |
+| 关键问题 | 曾考虑或尝试的方案 | 最终选择 | 核心取舍 |
+| --- | --- | --- | --- |
+| LoongArch AI 软件栈 | 直接使用同架构预编译包及默认优化路径 | 固定工具链源码构建、标量 MLAS 路径和 ISA/ABI 检查 | 增加构建与补丁维护成本，并接受标量性能约束，换取目标板兼容性与推理数值正确性 |
+| 系统构建 | 完整替换为新 Buildroot Rootfs；早期实机稳定性未达要求 | 保留稳定 BSP，选择性合入组件形成 Hybrid Rootfs | 增加清单合并与版本组合维护，换取内核、驱动基础的稳定性 |
+| 人物检测模型 | YOLO11n-Pose、手部方案及 FastestDet；后者板端延迟较高 | TinyissimoYOLO person-only 正式 V1.2 模型 | 收敛通用识别任务，换取单核板端更低的检测延迟 |
+| 持续人物感知 | 每次目标更新都运行 Detector | 低频 Detector 搜索与纠偏，Sparse LK Tracker 更新间隙位置 | 增加目标状态、重获和时效管理，换取更高的目标位置更新频率 |
+| 语音交互 | 完整本地开放式 AI，或全部依赖在线服务 | 本地 KWS、离线快捷能力与在线 ASR/LLM/TTS 组合 | 开放式对话依赖网络，换取单核平台上的能力覆盖与断网基本入口 |
+| 人物跟随 | 深度测距或 SLAM 等完整空间感知路线 | 人物框远近代理、头身协调与目标时效门控 | 放弃绝对距离与自主导航能力，换取较低硬件成本和受控低速跟随 |
+| 电机控制 | 由 Linux 主控直接承担运动执行与失联判断 | ESP32-S3 独立执行模式、租约和故障停车 | 增加第二控制器及 UART 协议复杂度，换取主控失联时的执行侧停车能力 |
 
 **表 15-1 七项技术难点与方案权衡。**
 
@@ -2387,7 +2387,7 @@ flowchart LR
 
 ### 18.1 产品设计总结
 
-LongPet 已形成面向老年日常陪伴与家属协同的 LoongArch 智能终端原型。老人端以大入口触控、语音、本地提醒和关怀完成日常交互，Family Desktop 提供复杂管理与远程协助。在单核、无 LSX/LASX 的 2K0300 上，项目完成 Hybrid Rootfs、AI Runtime 适配、本地 KWS、轻量人物感知、在线语音、媒体会话和受控运动的集成。正式视觉方案在单人物板端测试中提供约 7～9 Hz 的目标位置更新，运动测试 58 项中 56 项通过、2 项按计划暂缓。原型已贯通感知、交互、家属协同与执行侧失联停车。
+LongPet 已形成面向老年日常陪伴与家属协同的 LoongArch 智能终端原型。老人端以大入口触控、语音、本地提醒和关怀完成日常交互，Family Desktop 提供复杂管理与远程协助。在单核、无 LSX/LASX 的 2K0300 上，项目完成 Hybrid Rootfs、AI Runtime 适配、本地 KWS、轻量人物感知、在线语音、媒体会话和受控运动的集成。人物感知、跨端协同与已开放的运动功能分别经过板端、双端和实机验证，原型已贯通感知、交互、家属协同与执行侧失联停车。
 
 ### 18.2 需求与成果对应
 
@@ -2674,7 +2674,7 @@ LongPet 已形成面向老年日常陪伴与家属协同的 LoongArch 智能终�
 
 #### B.3 FamilyLink / Family Desktop 接口
 
-FamilyLink REST 使用 UTF-8 JSON 和 `/api/v1` 路径前缀。设备默认回环监听；远程监听需配置长期 Bearer Token，请求头为 `Authorization: Bearer <TOKEN>`。家属端后续业务请求由 Electron 主进程 HTTP Adapter 发起，Renderer 经 preload/IPC 调用，连接信息仅返回 `hasToken` 摘要；Token 在连接弹窗输入期间短暂经过 Renderer，输入状态在连接信息更新或重新打开弹窗时清空。时间戳使用 UTC ISO 8601；提醒的 `scheduledDate` 为日期，`timeOfDay` 为本地日内时间。写操作使用最近设备快照中的 revision 或 `callId`。
+FamilyLink REST 使用 UTF-8 JSON 和 `/api/v1` 路径前缀。设备默认回环监听；FamilyLink 对外监听需配置长期 Bearer Token，请求头为 `Authorization: Bearer <TOKEN>`。家属端后续业务请求由 Electron 主进程 HTTP Adapter 发起，Renderer 经 preload/IPC 调用，连接信息仅返回 `hasToken` 摘要；Token 在连接弹窗输入期间短暂经过 Renderer，输入状态在连接信息更新或重新打开弹窗时清空。时间戳使用 UTC ISO 8601；提醒的 `scheduledDate` 为日期，`timeOfDay` 为本地日内时间。写操作使用最近设备快照中的 revision 或 `callId`。
 
 非 2xx 响应采用 `{"error":{"code":"...","message":"...","details":{...}}}` 结构，`details` 可省略。当前设备与家属端处理 400、401、404、405、409、413、422、431、500、503 等状态；403、429 属于协议文档的建议状态，当前设备端未使用。409 可表示 revision 冲突、设备忙或自动跟随模式切换受限，客户端按 `error.code` 给出对应提示。
 
@@ -2748,7 +2748,7 @@ FamilyLink REST 使用 UTF-8 JSON 和 `/api/v1` 路径前缀。设备默认回�
 | `LONGPET_DATABASE_PATH` | SQLite 文件路径 | 未覆盖时 Qt `AppLocalDataLocation/longpet.db` | 路径可能暴露部署信息；LongPet: `Application.cpp` |
 | AI 配置 `LONGPET_AI_CONFIG` | ASR/LLM/TTS 分项 Provider、Base URL、模型、Key；`history_turns` 等 | Linux 默认 `/etc/longpet/ai.ini`，环境变量可覆盖具体项 | 含密钥；LongPet: `AiConfigRepository.cpp`、`deploy/配置说明.md` |
 | 天气配置 `LONGPET_WEATHER_CONFIG` | Host、Key、坐标、刷新与 stale 时限 | Linux 默认 `/etc/longpet/longpet-weather.ini`，环境变量可覆盖 | 含密钥与位置；LongPet: `WeatherConfigRepository.cpp` |
-| `LONGPET_FAMILY_LINK_ADDRESS/PORT/TOKEN` | FamilyLink 监听与长期 Bearer | 地址未设时回环，默认端口 8787；远程监听需 Token | Token 敏感；LongPet: `Application.cpp`、`FamilyLinkController.cpp` |
+| `LONGPET_FAMILY_LINK_ADDRESS/PORT/TOKEN` | FamilyLink 监听与长期 Bearer | 地址未设时回环，默认端口 8787；FamilyLink 对外监听需 Token | Token 敏感；LongPet: `Application.cpp`、`FamilyLinkController.cpp` |
 | `LONGPET_VISION_ENABLED`、`LONGPET_VISION_DETECTOR`、`LONGPET_VISION_MODEL_PATH` | 启停本地推理、选择 Detector 与模型文件 | `LONGPET_VISION_ENABLED` 默认关闭；Detector 默认 Tinyissimo，模型路径可覆盖 Adapter 默认值；AI 视野流可独立于推理连接 | 模型文件需版本管理；LongPet: `Application.cpp`、`VisionDetectorFactory.cpp`、`TinyissimoYoloAdapter.cpp` |
 | `LONGPET_MOTION_ENABLED/DEVICE` | Motion 开关与 UART 节点 | 默认关闭；启用后由部署指定设备 | 设备访问受系统权限约束；LongPet: `Application.cpp`、`deploy/longpet.service` |
 | Qt/音视频设备环境 | `QT_QPA_PLATFORM`、触摸输入、相机和 ALSA 设备选择 | 板端 service 设置，Adapter 读取 | 设备路径不含账号；LongPet: `deploy/longpet.service`、`src/platform/` |
