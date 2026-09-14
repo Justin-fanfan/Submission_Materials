@@ -2,7 +2,7 @@
 
 | 文档信息 | 内容 |
 | --- | --- |
-| 文档版本 | V0.4（编写中） |
+| 文档版本 | V0.5（编写中） |
 | 产品名称 | LongPet |
 | 文档类型 | 产品设计文档 |
 
@@ -14,6 +14,7 @@
 | V0.2 | 2026-09-13 | 完成报告第六章正文 |
 | V0.3 | 2026-09-13 | 完成报告第十章正文 |
 | V0.4 | 2026-09-14 | 将第八章拆分为八、九两章，后面章节依次顺延，完成报告第八、九章正文 |
+| V0.5 | 2026-09-14 | 完成第七章正文，同步第八章离线语音流程图 |
 ## 摘要
 
 <!-- 待正文完成后撰写。 -->
@@ -519,25 +520,191 @@ LongPet 服务以独立的 `longpet` 用户运行，配置显示、触摸、音�
 
 ## 7 LongPet 应用软件架构
 
+LongPet 主程序统一承载本地照护、联网语音、人物感知、家属协同和运动控制。`Application` 负责对象组装与生命周期，本地 `AppController` 和远程 `FamilyLinkController` 接收操作意图，Service 集中处理业务规则；语音、视觉、媒体和运动等外部能力通过 Port 与 Adapter 接入。该结构使不同入口复用同一业务逻辑，并支持可选设备能力的独立降级与后续扩展。
+
 ### 7.1 应用软件总体分层
+
+`Application` 在启动时创建对象、注入依赖并连接 Qt 信号，运行时由本地和远程控制入口调用共享的业务服务。Repository 提供持久化边界，设备 Port 提供外部能力边界（图 7-1）。
+
+```mermaid
+flowchart TB
+    UI[Qt6 页面与 MainWindow] --> AC[AppController 本地流程]
+    FD[Family Desktop] --> HTTP[FamilyLinkHttpAdapter]
+    HTTP --> FC[FamilyLinkController 远程请求]
+    FC --> FL[FamilyLinkService 远程业务边界]
+    AC --> S[业务与协同 Service]
+    FL --> S
+    S --> R[Repository]
+    R --> DB[(SQLite 与配置文件)]
+    S --> P[能力 Port]
+    P --> A[平台 Adapter 与 Provider]
+    A --> E[OS 设备 网络服务 MCU]
+    APP[Application 组合根] -.创建与注入.-> AC
+    APP -.创建与注入.-> FL
+    APP -.创建与注入.-> S
+    APP -.创建与注入.-> R
+    APP -.创建与注入.-> A
+```
+
+*图 7-1 LongPet 主程序逻辑分层与依赖方向。虚线表示启动期组装，实线表示运行期业务调用。*
+
+| 模块层 | 主要职责 | 职责边界 |
+| --- | --- | --- |
+| Qt 表示层 | 呈现页面、表情、状态栏及会话快照；发出语义化用户事件 | 直接读写数据库、发 HTTP 请求、占用音频或摄像头、写串口 |
+| 控制层 | 将本地或远程事件映射为业务动作，组织页面跳转和请求/响应 | 复制照护规则、协议实现或设备驱动 |
+| Service 层 | 校验业务约束、维护状态机和服务间协作，给出可显示结果 | 依赖某个 Qt 页面或自行解析底层硬件协议 |
+| Repository / Port | 隔离持久化与外部能力契约 | 决定用户流程或产品界面 |
+| Adapter / Provider | 实现 SQLite 以外的平台、网络、音视频和 UART 接入及错误映射 | 绕开 Service 修改业务状态或决定控制权限 |
+
+*表 7-1 软件层级的职责边界。*
+
+语音、视觉、媒体、天气和运动使用 Port/Adapter 隔离具体实现，便于替换适配器并控制故障影响范围。网络管理等简单能力由 Service 直接使用 Adapter；设置变更由 `SettingsService` 发信号，再由 `Application` 连接音量和背光 Adapter。
 
 ### 7.2 Qt6 表示层与适老界面
 
+`MainWindow` 汇集页面并发出提醒保存、通话、语音和设置变更等语义信号。`AppController` 调用 `ReminderService`、`CareService`、`SettingsService`、`VideoCallService` 等业务服务，再将结果返回页面。表情、状态栏、会话状态和提示消息随业务状态更新，使界面与服务状态保持一致。
+
+本地与家属端操作复用同一套提醒规则：`ReminderService` 校验名称、时间和重复设置，页面负责提交草稿与显示结果。页面关闭或切换不影响提醒调度及已保存数据。
+
 ### 7.3 应用控制层与页面流程
+
+本地 `AppController` 协调导航、超时返回、页面刷新和语音快捷动作，并呈现服务状态与错误。远程 `FamilyLinkController` 处理路由、鉴权、输入解析和响应映射，再调用 `FamilyLinkService`。两条入口共用业务服务，规则集中在 Service 层。
+
+```mermaid
+flowchart LR
+    L[触屏与本地语音] --> AC[AppController]
+    R[家属端请求] --> FH[FamilyLinkHttpAdapter] --> FC[FamilyLinkController] --> FL[FamilyLinkService]
+    AC --> RS[Reminder / Care / Settings / System]
+    FL --> RS
+    AC --> VC[Voice / VideoCall]
+    FL --> VC
+    FL --> MV[Motion / Vision 会话能力]
+    RS --> REP[Repository]
+```
+
+*图 7-2 本地与远程入口对同一业务服务的复用。*
+
+新增本地或家属端页面时，可复用现有业务规则和持久化能力，减少跨端重复实现。
 
 ### 7.4 业务服务、Repository 与本地持久化
 
+`ReminderService` 管理提醒校验、调度和完成状态；`CareService` 汇总照护事件形成今日关怀；`SettingsService` 管理持久化设置；`SystemService` 汇聚网络、电源、音量和背光状态；`WeatherService` 定时刷新天气，并在网络恢复后补刷、标记数据时效。各服务按产品功能划分，可同时支持本地与远程操作。
+
+`DatabaseManager` 打开 SQLite 并维护版本化 schema；`ReminderRepository`、`CareEventRepository` 和 `SettingsRepository` 封装查询与更新。AI、天气配置由相应 Repository 读取，Provider 工厂据此选择实现。本地与远程入口通过 Service 访问持久化数据，提醒修订冲突由业务服务处理，Repository 执行持久化。数据库是核心启动依赖，打开失败时 `Application::initialize` 失败。
+
 ### 7.5 设备适配层与能力降级
+
+Port 定义服务所需能力，Adapter 对接具体设备或外部实现。`VoiceInteractionService` 使用 ASR、LLM、TTS 和音频 Port；`VisionService` 使用 Camera、Detector、Tracker Port；`MotionService` 和 `VideoCallService` 分别使用运动和媒体 Port。`Application` 在启动时注入实现，使 Service 不依赖单一设备或外部服务的具体实现。
+
+可选能力故障时，系统维持其他功能运行。`VoiceCapabilityService` 根据配置、网络和 Provider 状态判断在线语音可用性，本地快捷指令与陪伴独立运行；天气服务保留带时效标记的最近快照并在网络恢复后补刷；摄像头或视觉模型不可用时，`VisionService` 报告状态。FamilyLink、AI 视野或 Motion 启动失败会被分别记录，不影响其他可用模块初始化。核心数据库故障则由启动流程明确报告。
 
 ### 7.6 AI 语音模块与 Provider 分层
 
+`VoiceCommandDispatcher` 根据 KWS 事件、触屏请求、紧急与停止命令以及在线状态选择处理路径。`VoiceInteractionService` 管理录音、ASR、LLM、工具调用、TTS 和播放；`LocalCompanionService` 处理本地陪伴和快捷动作。`VoiceToolRegistry` 校验工具参数并调用现有业务 Service，例如创建提醒，使语音操作遵循与触屏相同的业务规则。`KwsProcessAdapter` 使用 `QProcess` 管理独立 KWS bridge，并向 `KwsPort` 发布事件。
+
+```mermaid
+flowchart LR
+    K[KWS bridge 独立进程] --> KP[KwsProcessAdapter / KwsPort] --> D[VoiceCommandDispatcher]
+    UI[触屏语音入口] --> D
+    C[VoiceCapabilityService] --> D
+    D -->|在线可用的 KWS 请求或触屏手动尝试| V[VoiceInteractionService]
+    D -->|离线 KWS 快捷词| O[LocalCompanionService 与本地动作]
+    V --> M[MediaSessionCoordinator]
+    V --> A[VoiceAudioPort]
+    V --> ASR[AsrProviderPort]
+    V --> LLM[LlmProviderPort]
+    V --> TTS[TtsProviderPort]
+    V --> T[VoiceToolRegistry] --> B[ReminderService 等业务能力]
+    ASR --> PA[Provider Adapter]
+    LLM --> PA
+    TTS --> PA
+```
+
+*图 7-3 语音会话、Provider 与业务工具的分层。*
+
+ASR、LLM、TTS 分别配置 Provider Port，`AiProviderFactory` 可按能力选择实现。`ProviderHttpClient` 异步执行网络请求，并以会话 ID 关联结果；取消时中止 Provider 与音频任务，旧会话回调无法更新新会话。在线能力不可用时，KWS 路径仍支持已配置的本地快捷动作和陪伴音频。触屏语音入口显示不可用原因，在线尝试失败后允许重试；离线能力范围保持为快捷指令与本地音频。
+
 ### 7.7 视觉模块与 TargetObservation 数据通路
+
+`CameraCaptureAdapter` 实现 `CameraSourcePort`，以单采集进程和 `acquire/release` 计数共享摄像头。`VisionService` 在独立线程中处理最新帧，将 Detector 与 Tracker 的输出统一为 `TargetObservation`。观测提供目标状态、帧序号、采集与发布时间、观测年龄、画面尺寸、人物框、归一化位置及置信度。家属端与自动控制共用该接口，无需依赖模型内部格式；人物框高度用于粗略判断远近。
+
+```mermaid
+flowchart LR
+    CAM[CameraCaptureAdapter 单采集源] --> VS[VisionService]
+    CAM --> FV[FamilyVisionMonitorService]
+    CAM --> CALL[VideoCallMediaAdapter]
+    DET[Detector Port] --> VS
+    TRK[Tracker Port] --> VS
+    VS --> OBS[TargetObservation]
+    OBS --> FV
+    OBS --> AUTO[AutomaticHeadTrackingService]
+    AUTO --> MS[MotionService]
+    FV --> VIEW[家属端 AI 视野]
+```
+
+*图 7-4 摄像头共享与统一视觉观测的多消费者数据通路。*
+
+`AutomaticHeadTrackingService` 根据观测时效与位置提出跟头或跟随请求，由 `MotionService` 统一处理运动权限。`FamilyVisionMonitorService` 复用相机帧和人物观测，向家属端发布 AI 视野，无需重复运行检测器。视频通话使用同一相机源，期间暂停 Vision 推理和自动跟随；仅查看 AI 视野不影响本地 Vision。
 
 ### 7.8 FamilyLink 服务与家属端协同
 
+FamilyLink 将家属端请求接入设备已有的业务服务。`FamilyLinkHttpAdapter` 处理 HTTP 传输，`FamilyLinkController` 负责路由、认证和数据转换，`FamilyLinkService` 组合提醒、关怀、设置、系统状态、通话、视觉监看与运动会话能力。远程修改与本地操作共用业务校验和状态机；AI 视野、通话及远控分别由专门的媒体或运动服务处理。
+
+FamilyLink 默认绑定本机地址；配置远程监听时必须提供令牌，否则 `Application` 拒绝启用。远程读写仍通过业务服务校验，AI 视野会话由专门服务管理。
+
 ### 7.9 MotionService 与运动 MCU 协同
 
+`MotionService` 统一处理人工远控和自动视觉运动。家属端经 `FamilyLinkService` 取得远控会话，`FamilyMotionControlAdapter` 将实时控制数据转为 `FamilyMotionControlPort` 事件；`AutomaticHeadTrackingService` 提出跟头与跟随请求。`MotionService` 检查模式、人工占用及 MCU 状态，再通过 `MotionPort` 和 `EspSerialAdapter` 发送 UART 命令。
+
+```mermaid
+flowchart LR
+    FAMILY[FamilyLink 远控会话] --> FPORT[FamilyMotionControlPort / Adapter]
+    OBS[TargetObservation] --> AUTO[AutomaticHeadTrackingService]
+    FPORT --> MS[MotionService 模式与控制权]
+    AUTO --> MS
+    MS --> MP[MotionPort] --> ESP[EspSerialAdapter] --> UART[UART] --> MCU[运动 MCU]
+    MCU --> ESP --> MS
+    MS -. STATUS / head_offset / fault .-> AUTO
+    MS -. motion_status .-> FPORT
+    FPORT -. 状态反馈 .-> FAMILY
+```
+
+*图 7-5 人工与自动控制汇入同一运动服务。实线表示命令，虚线表示状态反馈。*
+
+集中仲裁使视觉策略可独立迭代，也避免远控与自动模式争夺控制权。MCU 的 `STATUS` 更新 `MotionService`，再反馈给视觉策略和家属端；人物跟随仅使用有效的 MCU 状态继续决策。主控发出命令后，实际执行状态以 MCU 后续报告为准。服务停机或链路异常时，`MotionService` 结束相应控制状态，MCU 继续执行独立的命令超时、故障锁存和停车保护。
+
 ### 7.10 线程、进程、资源与生命周期管理
+
+`Application` 集中管理资源持有者的创建与关闭，Service 维护会话和状态机，Adapter 管理进程与网络句柄。视觉检测和跟踪运行在 `VisionInferenceThread`；KWS bridge、相机采集、语音录放及通话音频由相应 Adapter 通过 `QProcess` 管理；Provider 使用异步 Qt 网络请求及超时、取消回调。摄像头、麦克风和异步结果分别按资源所有权与会话 ID 协调。
+
+```mermaid
+flowchart TB
+    APP[Application 启停与连接] --> CAMERA[CameraSourcePort 多消费者 acquire/release]
+    APP --> MEDIA[MediaSessionCoordinator 独占音频 owner]
+    APP --> VISION[VisionService 推理线程]
+    APP --> NET[Provider 网络请求与会话 ID]
+    CAMERA --> CV[Vision / AI 视野 / 通话]
+    MEDIA --> KWS[KWS 暂停确认与恢复]
+    MEDIA --> VA[联网语音 / 离线陪伴 / 通话]
+    CALL[VideoCallService 活动状态] --> VISION
+    CALL --> AUTO[HEAD_ONLY 暂停 / PERSON_FOLLOW 关闭]
+    NET --> FENCE[取消与旧回调隔离]
+```
+
+*图 7-6 共享硬件与异步任务的运行期协调。*
+
+| 资源或异步边界 | 当前协调机制 | 异常处理 |
+| --- | --- | --- |
+| 摄像头 | 一个 `CameraCaptureAdapter` 对 Vision、AI 视野和通话计数共享；最后一位消费者释放后停采集 | 相机或模型不可用时报告状态，其他业务保持运行 |
+| 麦克风与音频 | `MediaSessionCoordinator` 为语音、离线陪伴、通话维护 owner；KWS 暂停确认后才允许打开音频，释放后延迟恢复 KWS | 暂停确认超时则中止本次音频操作 |
+| 通话与视觉 | 通话状态通知 Vision 和自动控制；媒体 Adapter 使用共享相机源 | 通话时暂停 Vision 与 HEAD_ONLY，并关闭 PERSON_FOLLOW；结束后 Vision 可重新获取新观测，HEAD_ONLY 满足条件才恢复，PERSON_FOLLOW 须家属显式重新开启 |
+| 网络请求与会话 | Provider 超时/取消；`VoiceInteractionService` 以 session ID 拦截旧 ASR、LLM、TTS 和播放回调 | 当前会话返回错误或结束，旧结果与新会话隔离 |
+| 运动控制 | `MotionService` 统一模式、会话和状态；Adapter 承接网络与 UART | 控制能力退出，MCU 继续执行独立安全保护 |
+
+*表 7-2 主要共享资源与异步边界。*
+
+关闭时，`Application::shutdown` 先停止媒体超时与 KWS 恢复调度，再依次停止语音、天气、视觉、自动运动、Motion、家属端监听、提醒及平台监测，最后释放对象并关闭数据库。活跃任务由对应 Service 取消，设备与网络句柄由 Adapter 释放。`deploy/longpet.service` 负责自启动和异常重启，与应用内资源释放共同构成恢复边界。
+
 
 ## 8 核心业务功能设计
 
@@ -617,16 +784,19 @@ flowchart LR
 
 ```mermaid
 flowchart TD
-    W[小龙小龙或触摸陪我说话] --> N{在线 AI 可用?}
-    N -- 是 --> L[倾听需求] --> Q[思考并进行Tool Calling] --> P[基础的记忆整理] --> O[回答与播报] --> H[返回陪伴]    
-    N -- 否 --> K[本地快捷入口]
+    W[小龙小龙] --> N{在线 AI 可用?}
+    N -- 是 --> L[倾听需求] --> Q[思考并进行 Tool Calling] --> P[基础的记忆整理] --> O[回答与播报] --> H[返回陪伴]
+    N -- 否 --> K[离线快捷提示与关键词]
     K --> B[时间·提醒页面·返回主页等本地动作]
     K --> C[有授权音频时播放陪伴内容]
     B --> H
     C --> H
+    T[触摸陪我说话] --> M[手动尝试在线会话]
+    M --> L
+    M -. 在线请求失败 .-> E[显示错误并允许重试] --> H
 ```
 
-图 8-4 在线与离线语音流程。在线 AI 不可用时，本地唤醒和已配置的快捷功能仍可使用。
+图 8-4 在线与离线语音流程。在线 AI 不可用时，KWS 唤醒可进入本地快捷功能；触屏入口会先提示不可用原因并尝试在线会话，失败后提示并允许重试，不会自动转为离线大模型对话。
 
 离线时，“小龙小龙”打开本地快捷提示；本地词可打开提醒、报时、返回主页、进入联系家人的通话入口或紧急页面。“陪我说话”可播放已配置的本地陪伴音频，音频文件缺失时页面提示不可播放。通话仍需网络，紧急页面目前不自动报警；语音“停止”用于取消对话或陪伴音频，或触发底盘停车。
 
@@ -905,25 +1075,134 @@ CNN 周期纠偏与 Tracker 目前在同一工作线程同步执行，CNN 推理
 
 ## 10 接口与数据设计
 
+LongPet 的接口设计把“用户或算法提出的意图”与“外部系统确认的事实”分开。主程序不让页面、AI 结果或家属端直接改 SQLite、占用媒体设备或向 MCU 写串口，而是通过 Service、数据契约和受控传输边界协作。本章解释这些边界及失效语义；附录 B 给出接口方向、关键字段和可核对的协议索引。接口行为以当前代码及当前协议为准，历史报告中的计划项不自动视为已实现。
+
 ### 10.1 系统接口总体设计与边界
+
+接口可按作用范围分为七类：板内 C++ Service/Port 与模型契约、KWS/音视频等进程间接口、主控—MCU 的 UART 接口、LongPet—Family Desktop 的 HTTP 与 WebSocket 接口、AI/天气第三方 HTTP 接口、相机/音频/显示/触摸设备接口，以及 SQLite/配置/模型文件接口。分类的目的不是增加层数，而是让每类接口都有明确的数据所有者、时效和失败结果。
+
+```mermaid
+flowchart LR
+    UI[Qt 页面] --> APP[Controller 与 Service]
+    FAMILY[Family Desktop] -->|HTTP 控制面| APP
+    FAMILY <-->|WebSocket 画面 音频 远控| MEDIA[媒体与远控适配器]
+    APP -->|业务读写| DATA[(SQLite 与配置)]
+    APP -->|Provider 请求| CLOUD[AI 与天气服务]
+    APP -->|设备能力| DEV[Camera Audio Display Input]
+    APP -->|运动意图| UART[UART 协议] --> MCU[Motion MCU]
+    MCU -->|STATUS 故障状态| UART
+```
+
+图 10-1 系统接口全景。HTTP 处理业务控制，WebSocket 承载实时流，UART 将主控意图交给独立 MCU；板内 Service 统一解释外部反馈。
+
+数据流与控制流分离是本设计的关键。例如 AI 视野的 JPEG 帧仅用于显示，人物框元数据须附带新鲜度；人物跟随另由策略层决定是否形成运动命令。家属端控制通道与画面通道独立，避免画面排队拖慢 STOP。通话的 HTTP 信令只管理呼叫状态与媒体会话参数，双向 JPEG/PCM 走独立媒体连接。
 
 ### 10.2 LongPet—运动 MCU 串口接口
 
+主控通过 115200 baud、8N1、无流控的双向 UART 与 Motion MCU 通信。主控侧 `MotionService` 生成模式、底盘、头部和视觉目标等运动意图，`EspSerialAdapter` 负责串口写入和状态解析；MCU 固件根据当前模式、参数与自身安全状态决定是否执行。协议是以行结束的 ASCII 命令，主要类别包括 `MODE`、`MOVE`、`HEAD`、`TARGET`、`FOLLOW_MOVE`、`STOP`、`PING` 和 `STATUS`。当前主程序 Adapter 实际发送 `STOP/MODE/MOVE/HEAD/TARGET/FOLLOW_MOVE/STATUS`；`PING` 属于 MCU 协议能力，不能据此宣称主程序定时发送 PING。
+
+`TARGET` 表示人物相对画面中心的偏差和框面积，在 `HEAD_ONLY/FOLLOW` 中服务于头部目标；`FOLLOW_MOVE` 则是 `FOLLOW` 模式下独立的底盘意图，不能由目标像素面积自动推导。`PING` 只确认一般链路流量，不延长移动或目标时效。`STATUS` 回传 mode、motion、stop reason、fault、target、servo、可选 head_offset 和 imu 等事实；主控必须把串口可打开与 MCU 状态仍新鲜区分开。非法行不会成为有效控制；写入失败、状态过期或故障使上层退出控制路径，MCU 仍保有最终执行与停车裁决。完整命令参数及模式矩阵见附录 B.2，安全时效见第 11 章。
+
 ### 10.3 LongPet—Family Desktop 接口
+
+设备端 `FamilyLinkController` 提供 `/api/v1` 下的 HTTP/JSON 接口，读取状态、设置、提醒和通话快照，并以短时会话入口开放 AI 视野和远控。家属端通过 Electron 主进程的 HTTP Adapter 发业务请求，渲染进程通过 preload/IPC 获取结果；连接信息只向 Renderer 返回 `hasToken` 摘要。当前连接弹窗仍在 Renderer 输入 Token，且成功后未立即清空输入 state，因此不能宣称长期凭据只存在主进程内存。设备端非回环监听要求配置 Bearer Token，未配置时不开放远程监听。当前 HTTP/WS 是受控局域网方案，不代表可直接公网暴露。
+
+```mermaid
+flowchart LR
+    R[Family Desktop Renderer] --> IPC[preload / IPC]
+    IPC --> MAIN[主进程 FamilyLink HTTP Adapter]
+    MAIN -->|REST 状态 设置 提醒 模式 通话信令 会话申请| FL[LongPet FamilyLink]
+    FL --> S[既有业务 Service]
+    R <-->|AI 视野 WS: JPEG + vision_target| V[视觉流 Adapter]
+    R <-->|通话 WS: JPEG + PCM + Control| C[媒体 Adapter]
+    R <-->|远控 WS: chassis head stop + status| M[Motion 控制 Adapter]
+```
+
+图 10-2 FamilyLink 控制面与三个实时通道。流连接先通过 HTTP 取得临时会话，再用一次性凭据鉴权。
+
+远程提醒和设置写入经过相同业务 Service 的校验及 revision 冲突检查，设备确认前不能显示“保存成功”。AI 视野用共享摄像头帧和 `vision_target` 元数据；旧框在失效或断流后隐藏。人工远控的底盘命令需要按短周期刷新，松开时先发 STOP；即使客户端无法送达 STOP，服务和 MCU 仍独立处理租约超时。音视频通话以 `callId + expectedRevision` 防止旧动作误作用于新呼叫，只有 `connected && mediaReady` 才视为媒体接通。各接口的路径、消息和错误列于附录 B.3。
 
 ### 10.4 AI Provider 与第三方服务接口
 
+语音的 ASR、LLM、TTS 分别通过独立 Port 与配置接入：ASR 提交音频并返回文字，LLM 接收上下文并返回文本/流式片段或受限工具调用，TTS 接收文字并返回音频。`AiProviderFactory` 为每项能力单独选实现，因此三项可以使用不同 Provider、模型和凭据。当前代码有 OpenAI-compatible 接口及阿里云实现：兼容接口分别使用 `audio/transcriptions`、`chat/completions`、`audio/speech`；阿里云 ASR/TTS 使用其原生多模态接口，LLM 走兼容协议。`ProviderHttpClient` 处理网络超时、取消和 HTTP 错误，再把带 session ID 的结果交回业务层。自建 LoongArch AI Server 可经 Provider 契约接入，但当前资料不能把服务器端视为正式交付能力。
+
+天气走独立的 `WeatherProviderPort`。当前 `QWeatherProvider` 向配置的专属 Host 发送当前天气 GET，请求头 `X-QW-Api-Key` 携带密钥，不把密钥放入 URL；`WeatherService` 处理缓存、新鲜度、重试和状态栏/语音可用数据。第三方接口失败不应自动变成页面异常或持久业务数据。方法、字段类别和错误归属见附录 B.4。
+
 ### 10.5 摄像头、音频、显示与平台硬件接口
+
+主程序把相机视为 `CameraSourcePort`，由一个 `CameraCaptureAdapter` 管理采集进程、最新 JPEG 帧和多消费者 `acquire/release`；Vision、AI 视野和视频通话共用该来源。音频由 `VoiceAudioPort`、通话媒体 Port 及 `MediaSessionCoordinator` 协调，KWS 暂停被确认后才允许语音或通话开启麦克风；Adapter 使用平台媒体进程接入 ALSA/GStreamer。显示与触摸由 Qt 平台插件承接，状态和页面只消费抽象事件；系统状态服务汇聚设备可用性。串口设备访问仅在 Motion Adapter 中实现。
+
+这些接口的设备名、模型路径和 Qt 平台参数由部署配置确定，不应写死在业务服务。设备缺失时返回能力不可用或相应故障，不用伪造摄像头帧、电池百分比或“已应用”设置。硬件连接与系统软件依赖分别见第 5、6 章；附录 B.6 只列当前配置解析规则。
 
 ### 10.6 本地业务数据与持久化
 
+`DatabaseManager` 使用 SQLite 版本化 schema。默认数据库文件位于 Qt `AppLocalDataLocation` 下的 `longpet.db`，`LONGPET_DATABASE_PATH` 可覆盖；板端 service 可显式配置部署路径。当前 schema v1 只有 `schema_meta`、`reminders`、`reminder_events`、`care_events`、`settings` 五张表。提醒定义、触发/完成记录、饮水及其他关怀事件和用户设置是持久业务数据；网络状态、电源读数、当前通话、视觉观测、天气快照和运动状态属于运行期状态，不应凭产品设想增设不存在的数据表。
+
+| 数据域 | 主要内容 | 生命周期 | 写入来源 | 主要读取方 |
+| --- | --- | --- | --- | --- |
+| 提醒与事件 | 提醒草稿、revision、触发/完成记录 | SQLite 持久化 | ReminderService 经 Repository | 本地页面、FamilyLink、照护汇总、语音工具 |
+| 关怀事件 | 饮水、活动、交互事件及来源 | SQLite 持久化 | CareService 经 Repository | 今日关怀、本地与家属端状态 |
+| 用户设置 | 音量、亮度、宠物风格等键值 | SQLite 持久化 | SettingsService 经 Repository | 本地 UI、FamilyLink、硬件应用链 |
+| AI 与天气配置 | Provider、模型、请求参数及密钥 | 独立配置文件/环境覆盖 | 部署配置 | 组合根与 Provider 工厂 |
+| 会话与观测 | AI 历史、通话、Vision、Motion、天气快照 | 进程内或当前连接；重启不继承 | 对应 Service/Adapter | 当前页面与会话消费者 |
+
+表 10-1 数据所有权与生命周期。`care_events` 记录的活动或交互取决于实际写入入口，不等于已经有完整的运动/健康数据采集系统。
+
+```mermaid
+flowchart LR
+    INTENT[本地 家属 语音意图] --> SERVICE[业务 Service 校验]
+    SERVICE --> REPO[Repository] --> SQLITE[(SQLite 持久业务数据)]
+    CONFIG[受限 INI 与环境配置] --> START[Application 启动时注入]
+    START --> RUNTIME[会话 天气 视觉 运动运行态]
+    SERVICE --> RUNTIME
+    RUNTIME -- 进程退出后不继承 --> END[状态结束]
+```
+
+图 10-3 持久业务数据、启动配置与运行期状态的不同生命周期。
+
 ### 10.7 AI 对话、记忆与敏感数据
+
+`VoiceInteractionService` 的历史是有限的进程内 `user/assistant` 文本对。默认配置 `historyTurns=4`，可配置范围为 0—20；会话流程正常收束且用户输入、助手回复非空时追加一对，即使 TTS 播放失败也可保留文字回复，并裁剪到最多 `2 × historyTurns` 条。请求会临时组合 system prompt、当前有效天气快照、历史及本轮用户输入。清空历史或重启进程后，这份上下文消失；目前没有长期记忆数据库、跨设备用户画像或云端同步机制。工具调用可通过 `VoiceToolRegistry` 修改提醒等持久业务数据，但工具执行本身不等于把整段对话持久化。因而应严格区分“提醒数据持久化”“有限对话上下文”和“长期记忆”。
+
+音频、对话、第三方请求和家庭状态均可能包含敏感信息。Provider 密钥与 FamilyLink 长期凭据只作为受控配置进入相应进程；正式示例仅写 `<API_KEY>`、`<TOKEN>`、`<BASE_URL>` 等占位符。对话历史不写入当前 SQLite，并不能代替日志、网络和配置权限的隐私控制。
 
 ### 10.8 视觉观测、训练数据与模型元数据
 
+Camera 帧带 JPEG、sequence、timestamp 与旋转信息；Detector/Tracker 的具体结果由 `VisionService` 归一为 `TargetObservation`。它包含 `present`、`fresh`、跟踪状态、帧序号、采集/发布时间、`ageMs`、画面尺寸、目标框与归一化中心/尺寸、置信度和诊断。目标缺失时不能凭上次 bbox 继续驱动界面或运动。家属端 AI 视野把可绘制观测序列化为 `[0,1]` 左上角 `x/y`、宽高 `w/h`；`present=false`、`fresh=false` 或 SEARCHING/LOST 时发送 `bbox:null`。自动跟头与人物跟随消费服务级观测，再经 MotionService 形成动作，而非消费 AI 视野的 JSON。
+
+```mermaid
+flowchart LR
+    FRAME[CameraFrame JPEG sequence timestamp] --> DT[Detector / Tracker]
+    DT --> OBS[TargetObservation present fresh age bbox state]
+    OBS --> VIEW[AI 视野序列化与绘框]
+    OBS --> HEAD[自动跟头策略]
+    OBS --> FOLLOW[人物跟随策略]
+    FOLLOW --> MOTION[MotionService]
+    HEAD --> MOTION
+```
+
+图 10-4 视觉数据契约的消费者。训练样本、模型权重和模型元数据是另一类文件资产；运行期观测不写入业务 SQLite，训练过程见第 9 章。字段表见附录 B.5。
+
 ### 10.9 配置管理、令牌与隐私保护
 
+配置分为非敏感运行参数、敏感凭据和模型/设备路径。AI 与天气 INI 由各自 Repository 读取，环境变量可覆盖 Provider、模型、超时、密钥等值；FamilyLink 监听地址、端口与 Token 由启动配置决定；数据库路径和视觉模型路径也可覆盖。板端 `longpet.service` 为服务指定运行用户、补充设备组和必要环境，密钥适合通过受限配置或 service drop-in 注入，不应进入源码、公开报告或截图。当前家属端 Electron 主进程 HTTP Adapter 持有后续请求所用的 Bearer Token，连接信息只回传 `hasToken`；但 Renderer 连接弹窗成功后未立即清空本地 Token state，仍有内存残留风险。当前代码未实现自动签发和持久化配对体系。
+
+短时视觉、通话媒体与远控令牌只用于各自 WebSocket 会话，不应写入 URL、日志或长期业务表。受控局域网的 HTTP/WS 明文链路提供接口鉴权，却不提供传输加密；这属于当前部署边界，跨不可信网络时需要另行设计 HTTPS/WSS 或可信中转。附录 B.6 保留配置项名称和抽象路径，不列真实账号或密钥。
+
 ### 10.10 数据一致性、失效与降级处理
+
+系统采用“过期即失效”的接口语义，而非让旧数据静默冒充现况。提醒与设置写入使用 revision 检测并发修改；语音请求以 session ID 拦截取消后的 ASR/LLM/TTS 回调；天气快照保留来源与更新时间并标记 stale；视觉目标由 `present/fresh/ageMs` 及状态约束；家属端连接断开后不继续展示在线事实或旧框；通话依 `callId/revision/mediaReady` 区分信令成功与媒体接通；MotionService 同时检查 UART 与 MCU 状态，失联时撤销控制权。
+
+```mermaid
+flowchart LR
+    INPUT[外部结果或用户命令] --> CHECK{身份 版本 时效 能力有效?}
+    CHECK -->|是| APPLY[更新当前状态或执行受控动作]
+    CHECK -->|否| REJECT[拒绝 丢弃旧回调 或标记不可用]
+    REJECT --> UI[向本地或家属端反馈]
+    APPLY --> UI
+```
+
+图 10-5 接口结果进入产品状态前的有效性门控。不同接口的具体错误与恢复方式见附录 B.7；该图不替代第 11 章的 MCU 失效安全设计。
 
 ## 11 运动控制与系统安全设计
 
@@ -1026,7 +1305,7 @@ Family Desktop 发起远控会话，LongPet 校验会话身份、串口状态、
 
 ### 11.10 安全设计验证与证据追踪
 
-《LongPet 产品运动功能测试报告_2026-09-13_V1.3_全项通过版》附录 A 共列 58 项：56 项通过，左右平移两项（15、16 号）主动暂缓，待验证项为 0。表 11-3 列出运动安全设计与测试编号的对应关系。
+《LongPet 产品运动功能测试报告_2026-09-13_V1.3》附录 A 共列 58 项：56 项通过，左右平移两项（15、16 号）主动暂缓，待验证项为 0。表 11-3 列出运动安全设计与测试编号的对应关系。
 
 | 安全设计机制 | V1.3 测试编号 | 当前结论 |
 |---|---|---|
@@ -1162,6 +1441,154 @@ Family Desktop 发起远控会话，LongPet 校验会话身份、串口状态、
 ### 附录 A 需求—模块—测试追踪矩阵
 
 ### 附录 B 系统接口索引
+
+附录 B 以当前实现为基线，给出接口族、方向、关键字段、失败语义和 Source of Truth（下称 SoT）。路径均为相应工程内的相对路径；`LongPet:`、`Family:`、`MCU:` 分别指主程序、Family Desktop 和 Motion MCU 工程。正式协议与当前代码有差异时，运行行为以当前代码为准，协议修订应同步跟进。示例中的 `<BASE_URL>`、`<API_KEY>`、`<TOKEN>`、`<DEVICE_ID>` 都是占位符。
+
+#### B.1 接口总览
+
+| ID | 接口族 | 发送方 → 接收方 | 传输/机制 | 主要用途 | SoT |
+| --- | --- | --- | --- | --- | --- |
+| IF-BOARD-01 | 本地业务请求与状态 | Qt 页面 → AppController → Service | Qt 信号/方法与模型 | 提醒、关怀、设置、通话、语音 | LongPet: `src/app/AppController.cpp`、`src/services/` |
+| IF-DATA-01 | 业务持久化 | Service → Repository → SQLite | Qt SQL | 提醒、事件、设置 | LongPet: `src/data/DatabaseManager.cpp`、各 Repository |
+| IF-PROC-01 | KWS bridge | KwsProcessAdapter ↔ 独立 bridge | QProcess 标准输入/输出 | 唤醒、暂停确认、恢复、异常退出 | LongPet: `src/platform/KwsProcessAdapter.cpp`、`deploy/kws/` |
+| IF-MOTION-01 | Motion UART V2 | MotionService → MCU；MCU → MotionService | ASCII UART，双向 | 运动命令、状态与故障 | MCU: `docs/motion-protocol-v2.md`、`xiao_che/xiao_che.ino`；LongPet: `src/platform/EspMotionProtocol.cpp`、`EspSerialAdapter.cpp` |
+| IF-FAMILY-01 | FamilyLink REST | Family Desktop 主进程 ↔ LongPet | HTTP/JSON | 状态、设置、提醒、通话信令、会话签发 | LongPet: `src/app/FamilyLinkController.cpp`；Family: `docs/FAMILY_LINK_API.md` |
+| IF-FAMILY-02 | AI 视野流 | LongPet → Family Desktop Renderer | WebSocket，LPMF v1 | JPEG 与人物观测元数据 | LongPet: `src/platform/FamilyVisionStreamAdapter.cpp`、`FamilyVisionProtocol.cpp`；LongPet: `docs/LongPet-Vision-V2.1-Family-AI-View-Report.md` |
+| IF-FAMILY-03 | 通话媒体 | LongPet ↔ Family Desktop Renderer | WebSocket，LPMF v1 | 双向 JPEG/PCM、会话控制 | LongPet: `src/platform/VideoCallMediaAdapter.cpp`、`src/model/MediaFrameProtocol.cpp`；Family: `docs/VIDEO_CALL_MEDIA_PROTOCOL.md` |
+| IF-FAMILY-04 | 人工远控 | Family Desktop Renderer ↔ MotionService | WebSocket，LPMF v1 Control | 底盘、头部、STOP 和状态 | LongPet: `src/platform/FamilyMotionControlAdapter.cpp`；Family: `docs/FAMILY_LINK_API.md` 第 8 节 |
+| IF-FAMILY-05 | 自动视觉运动模式 | Family Desktop 主进程 ↔ FamilyLinkService | HTTP/JSON | HEAD_ONLY、PERSON_FOLLOW 与禁用 | LongPet: `src/app/FamilyLinkController.cpp`；Family: `docs/FAMILY_LINK_API.md` 第 9、12 节 |
+| IF-AI-01 | ASR / LLM / TTS | VoiceInteractionService ↔ Provider | Port + HTTP | 语音转写、回答、合成 | LongPet: `src/services/VoiceInteractionPorts.h`、`src/platform/AiProviderFactory.cpp`、各 Provider |
+| IF-AI-02 | 当前天气 | WeatherService ↔ QWeatherProvider | Port + HTTPS GET | 当前天气快照 | LongPet: `src/services/WeatherPorts.h`、`src/platform/QWeatherProvider.cpp` |
+| IF-VISION-01 | 目标观测 | VisionService → AI 视野/自动控制 | Qt 信号与 `TargetObservation` | 统一人物状态与时效 | LongPet: `src/model/VisionModels.h`、`src/services/VisionService.cpp` |
+| IF-DEVICE-01 | 相机/音频/显示/串口 | Adapter ↔ OS 设备 | GStreamer、ALSA、Qt 平台、UART | 平台能力接入 | LongPet: `src/platform/`、`deploy/longpet.service` |
+| IF-CONFIG-01 | 配置与模型 | Application/Adapter → 配置/模型文件 | INI、环境变量、文件系统 | Provider、路径、能力开关 | LongPet: `src/app/Application.cpp`、`src/data/*ConfigRepository.cpp`、`deploy/配置说明.md` |
+
+表 B-1 系统接口矩阵。Family Desktop 的早期 `VIDEO_CALL_SIGNALING_REPORT.md` 只描述信令阶段；媒体行为以当前代码和 `VIDEO_CALL_MEDIA_PROTOCOL.md` 为准。FamilyLink 协议中的“后续事件接口”不是当前已实现接口，不列入矩阵。
+
+#### B.2 Motion UART 接口
+
+通道为主控串口 ↔ MCU `Serial1`，115200 baud、8N1、无流控。MCU 接受 CR、LF 或 CRLF 行结束；主控当前以 LF 发送 ASCII 行。命令与状态/诊断共用双向 UART。下表是协议能力，未必表示主程序会主动发送每一种命令。
+
+| Command | 方向 | 允许模式 | 主要参数 | 用途与边界 |
+| --- | --- | --- | --- | --- |
+| `MODE <mode>` | 主控 → MCU | 模式切换入口 | `SAFE`、`HEAD_ONLY`、`MANUAL`、`FOLLOW` | 切换执行语义；重复当前模式是 no-op |
+| `STOP` | 主控 → MCU | 全模式 | 无 | 统一停车；不自动使头部回中 |
+| `PING` | 主控 → MCU | 全模式 | 无 | 协议支持的一般链路探测；当前 LongPet Adapter 无发送方法，不续租移动或目标 |
+| `STATUS` | 主控 → MCU | 全模式 | 无 | 请求一条 `[STATUS]`；当前 MotionService 周期请求 |
+| `MOVE <direction> <speed>` | 主控 → MCU | `MANUAL` | `FORWARD/BACKWARD/ROTATE_LEFT/ROTATE_RIGHT/SHIFT_LEFT/SHIFT_RIGHT`，速度 1—100 | 手动底盘命令；协议有 SHIFT，但当前 LongPet 上层不开放 SHIFT |
+| `HEAD <action> [step]` | 主控 → MCU | `MANUAL` | `LEFT/RIGHT`，步长 1—100 μs；或 `CENTER` | 人工头部步进/回中；协议可省步长，主程序发送明确步长 |
+| `TARGET <dx> <dy> <area>` | 主控 → MCU | `HEAD_ONLY`、`FOLLOW` | `dx/dy` 为 −4096—4096 px；`area` 为 0—16777216 px² | 人物相对画面中心的目标；`area=0` 表示目标丢失，只控制头部目标语义 |
+| `FOLLOW_MOVE <direction> <speed>` / `FOLLOW_MOVE STOP` | 主控 → MCU | `FOLLOW` | `FORWARD/ROTATE_LEFT/ROTATE_RIGHT`、速度 1—100；或 STOP | 独立的跟随底盘意图；不接受后退、平移 |
+
+表 B-2 Motion UART V2 主要命令。MCU 对非法字符、额外字段、未知命令、越界整数及当前模式不允许的命令拒绝整行，拒绝行不刷新超时。主控侧序列化也拒绝其不支持的方向和值。该协议不是每条命令均有单独 ACK；后续 `STATUS`、诊断及链路时效用于确认状态。模式、watchdog 和故障处置以 MCU: `docs/motion-protocol-v2.md` 及第 11 章为准。
+
+| `[STATUS]` 字段 | 主控解释 | 数据失效时的处理 |
+| --- | --- | --- |
+| `mode`、`motion`、`stop` | 当前 MCU 模式、底盘状态、停车原因 | 不以主控最后发送的命令代替 MCU 报告 |
+| `fault`、`target` | 故障锁存、当前是否有有效目标 | 故障或目标丢失时不得继续按旧状态运动 |
+| `servo` | 当前舵机脉宽，单位 μs | 只作为反馈，不由页面直接写值 |
+| `head_offset` | 可选 V2.3 物理头偏，单位 μs；主控将其规范为负左、正右 | 缺失时人物跟随不可假定头部已对齐 |
+| `imu` | IMU 可用性标志 | 不等于自主导航已实现 |
+
+表 B-3 MCU STATUS 的产品级解释。主控解析器允许缺少 `head_offset`，因此消费者还要检查 `headOffsetAvailable`；`uartAvailable` 与 `mcuOnline` 是主控运行期状态，不是 UART 原始 `[STATUS]` 字段。
+
+#### B.3 FamilyLink / Family Desktop 接口
+
+FamilyLink REST 使用 UTF-8 JSON，路径前缀 `/api/v1`。设备默认回环监听；远程监听需配置长期 Bearer Token，请求头为 `Authorization: Bearer <TOKEN>`。家属端由 Electron 主进程 HTTP Adapter 发后续请求，Renderer 经 preload/IPC 调用并只接收连接的 `hasToken` 摘要；但连接弹窗输入 Token 后，成功路径目前未清空 Renderer 本地 state。时间使用 UTC ISO 8601，写操作的 revision 或 `callId` 应以最近设备快照为准。
+
+| Interface | 方向/传输 | 请求或事件与核心字段 | 失败语义 / SoT |
+| --- | --- | --- | --- |
+| `GET /status` | 家属端 → 设备，HTTP | `apiVersion`、capabilities、device、system、care | 连接失败视为离线；LongPet: `FamilyLinkController.cpp`；Family: `FAMILY_LINK_API.md` |
+| `GET /settings`；`PATCH /settings` | 家属端 ↔ 设备，HTTP | `volume`、`brightness`、`petStyle`、`expectedRevision` | 修订冲突 409，能力不可用 503；同上 |
+| `GET /reminders`；`POST /reminders` | 家属端 ↔ 设备，HTTP | `items`；草稿的 type、title、timeOfDay、scheduledDate、repeatRule、enabled | 校验失败或能力不可用应显式返回；同上 |
+| `PUT /reminders/{id}`；`DELETE /reminders/{id}?expectedRevision=...` | 家属端 ↔ 设备，HTTP | 完整草稿及 `expectedRevision`；删除以查询参数携带版本 | 不匹配 409，不能覆盖新数据；同上 |
+| `GET/POST /video-call`；`POST /video-call/actions` | 家属端 ↔ 设备，HTTP | `mode`；`callId`、`expectedRevision`、`action`；快照含 `mediaPort/mediaToken/mediaReady` | 已占用、旧 callId 或 revision 被拒绝；LongPet: `VideoCallService.cpp`、`FamilyLinkController.cpp` |
+| `POST /vision-monitor/sessions` | 家属端 → 设备，HTTP | 返回 `sessionId/sessionToken/port/protocolVersion/frameRate/expiresAt` | 单 viewer 忙时 409，未启动 503；LongPet: `FamilyLinkController.cpp`、`FamilyVisionStreamAdapter.cpp` |
+| `POST /motion-control/sessions` | 家属端 → 设备，HTTP | 返回 `sessionId/sessionToken/port/protocolVersion/refreshIntervalMs/leaseTimeoutMs/expiresAt` | 已占用 409，服务不可用 503；LongPet: `FamilyLinkController.cpp`、`FamilyMotionControlAdapter.cpp` |
+| `GET/PUT /automatic-head-tracking` | 家属端 ↔ 设备，HTTP | 兼容接口；`enabled` 与当前 `active/state` | 不具备能力时 503；LongPet: `FamilyLinkController.cpp` |
+| `GET/PUT /automatic-tracking` | 家属端 ↔ 设备，HTTP | `mode=DISABLED/HEAD_ONLY/PERSON_FOLLOW`；返回 followState、distanceClass、targetAgeMs、headOffset 等 | 条件不满足时拒绝模式切换；LongPet: `FamilyLinkController.cpp`；Family: `FAMILY_LINK_API.md` 第 12 节 |
+
+表 B-4 当前 REST 接口。表中路径均在 `/api/v1` 后拼接；准确 JSON 结构和 HTTP 状态以 LongPet 当前控制器实现为准，Family: `docs/FAMILY_LINK_API.md` 为对端联调规范。计划中的 `/api/v1/events` WebSocket 尚未实现。
+
+| 实时接口 | 建立方式与方向 | LPMF 流/Control 内容 | 断开或无效时 |
+| --- | --- | --- | --- |
+| `/vision-monitor/v1`，通常端口 8789 | HTTP 签发短时会话；Renderer → 设备首帧 `authenticate`；设备 → Renderer | `DeviceVideo(1)` JPEG；`Control(5)` 的 `stream_started`、`vision_target`、`error` | 不认证不开放相机；断开隐藏旧帧和框；SoT: LongPet `FamilyVisionStreamAdapter.cpp`、`FamilyVisionProtocol.cpp` |
+| `/media/v1`，通常端口 8788 | 通话快照给出 `mediaPort/mediaToken`；双方 WebSocket | `DeviceVideo(1)`、`FamilyVideo(2)` JPEG；`DeviceAudio(3)`、`FamilyAudio(4)` PCM；`Control(5)` 鉴权及媒体状态 | 旧 callId/Token、媒体失败或断开使通话结束；SoT: LongPet `VideoCallMediaAdapter.cpp`；Family `VIDEO_CALL_MEDIA_PROTOCOL.md` |
+| `/motion-control/v1`，通常端口 8790 | HTTP 签发短时会话；Renderer → 设备首帧 `authenticate`；双向状态 | `Control(5)` JSON：`chassis`、`head`、`stop`、`release`；设备返回 `control_started`、`motion_status`、`error` | 断开撤销控制；MOVE 不再刷新则停车；SoT: LongPet `FamilyMotionControlAdapter.cpp`；Family `FAMILY_LINK_API.md` 第 8 节 |
+
+表 B-5 三种 WebSocket 通道。端口可由服务配置或快照决定，客户端按已配置设备 URL 的主机及返回端口推导地址，不把令牌放在 URL。三者复用 `MediaFrameProtocol`：每个 WebSocket Binary Message 为一个 LPMF 帧，24 字节大端帧头依次为 `LPMF` magic(4)、version(1)、streamType(1)、flags(2)、sequence(4)、Unix 微秒时间戳(8)、payloadLength(4)；payload 最大 2 MiB。Control 的 payload 为 UTF-8 JSON。通话媒体的当前设计详见 Family: `docs/VIDEO_CALL_MEDIA_PROTOCOL.md`。该文档约定 `/media/v1`，但当前 `VideoCallMediaAdapter` 只校验会话内 `callId` 与媒体 Token，尚未校验 WebSocket 请求路径；视觉和远控 Adapter 已校验各自路径。AI 视野与远控的具体鉴权字段以对应 Adapter 和测试为准。
+
+视觉与远控首个 Control 消息使用 `type=authenticate`、`protocol_version`、`session_id`、`token`；通话媒体首个 Control 消息使用 `type=authenticate`、`callId`、`token`。视觉 Control 元数据以 `type=vision_target` 携带帧序号、新鲜度、状态与可空 bbox。远控 `chassis` 需 `direction/speed`，`head` 需 `action/step_us`（回中除外），`stop` 无参数；状态反馈以 `motion_status` 携带 `uart_available/mcu_online/fault/mode/motion/updated_at` 等。通话音频为 PCM S16_LE、16 kHz、单声道、20 ms 帧；视频为 JPEG。通话、视觉和远控的短时会话不可互换。
+
+#### B.4 AI Provider 与天气接口
+
+| 能力/实现 | 方法与路径类别 | 请求核心字段 | 响应核心字段 | 超时/错误与 SoT |
+| --- | --- | --- | --- | --- |
+| OpenAI-compatible ASR | `POST <BASE_URL>/audio/transcriptions`，multipart | WAV `file`、`model`、可选 `language`、`response_format=json` | `text` | session ID 对应的成功/失败信号；LongPet: `OpenAiCompatibleProviders.cpp`、`ProviderHttpClient.cpp` |
+| 阿里云 ASR | `POST <BASE_URL>/services/aigc/multimodal-generation/generation` | `model`、含 WAV Data URI 的 `input.messages`、`parameters` | 转写文本 | 与兼容协议不同；LongPet: `AliyunProviders.cpp` |
+| OpenAI-compatible LLM | `POST <BASE_URL>/chat/completions` | `model`、`messages`、可选 `tools` 与流式参数 | 文本、SSE delta、tool calls/finish reason | 片段与工具参数校验，取消旧 session；LongPet: `OpenAiCompatibleProviders.cpp` |
+| OpenAI-compatible TTS | `POST <BASE_URL>/audio/speech` | `model`、`input`、`voice` | 音频字节 | 失败可保留文字回答；LongPet: `OpenAiCompatibleProviders.cpp` |
+| 阿里云 TTS | `POST <BASE_URL>/services/aigc/multimodal-generation/generation` 或 `.../services/audio/tts/SpeechSynthesizer`，按模型系列选择 | `model`、文本及语音参数 | `output.audio.url`，再下载音频字节 | 不与 ASR 共用固定响应解析；LongPet: `AliyunProviders.cpp` |
+| 当前天气 | `GET <BASE_URL>/weather/v1/current/{latitude}/{longitude}` | 可选语言；请求头 `X-QW-Api-Key: <API_KEY>` | 条件、温度、湿度等当前天气 JSON | 独立超时/错误码，缓存标记 stale；LongPet: `QWeatherProvider.cpp`、`WeatherService.cpp` |
+
+表 B-6 Provider 接口类别。ASR/LLM/TTS 的 Provider、Base URL、模型与 Key 可分别配置；`AiProviderFactory.cpp` 决定实际实现，不能从配置示例反推正式部署使用哪家供应商。网络、鉴权、限流、超时和无效响应被归入能力错误，不作为成功文本处理。自建 LoongArch AI Server 在 Provider 契约内可替换，但当前不是已交付服务器接口。
+
+#### B.5 Vision / TargetObservation 数据结构
+
+`CameraFrame` 是内部输入，`TargetObservation` 是 `VisionService` 对外的服务级契约，`vision_target` 是家属端网络序列化格式。三者不是同一对象。`PersonDetection.boundingBox` 用原画面像素坐标；`normalizedCenter/normalizedSize` 使用裁剪后的 `[0,1]` 坐标。家属端 `bbox={x,y,w,h}` 也是归一化坐标，但采用左上角加宽高表示，只有可绘制目标才出现。
+
+| Field | 类型 | 含义与单位/范围 | 主要消费者 |
+| --- | --- | --- | --- |
+| `present`、`fresh` | bool | 是否有目标、观测是否仍在有效时窗；两者需共同判断 | 自动控制、AI 视野 |
+| `status` | enum | SEARCHING、DETECTED、TRACKING、CORRECTED、LOST、REACQUIRED | 自动控制、AI 视野 |
+| `frameSequence` | uint64 | 对应采集帧序号；网络帧头取低 32 位 | 调试、画面/观测关联 |
+| `timestamp`、`publishedAt` | QDateTime | 采集与发布时刻 | 时效判定、遥测 |
+| `ageMs` | int64，ms | 观测年龄；需结合当前接收时刻判断 | 自动控制、AI 视野 |
+| `sourceSize` | QSize，px | 原画面宽高 | 像素几何转换 |
+| `target.boundingBox` | QRectF，px | 原画面中的人物框 | 本机运动策略与调试 |
+| `target.normalizedCenter/normalizedSize` | QPointF/QSizeF，0—1 | 相对画面的中心与尺寸 | AI 视野序列化、跟随距离代理 |
+| `target.confidence`、`detectorConfidence`、`trackerConfidence` | float | 目标及检测/跟踪置信度；来源不同，不能混作同一阈值 | 策略、诊断与 AI 视野 |
+| `trackerName`、`trackedPointCount`、`detectorRan` | string/int/bool | 本次跟踪器和检测器运行信息 | 遥测/诊断 |
+| `detectorMs`、`trackerMs`、`diagnostic` | double ms / string | 耗时与诊断，不直接作为控制授权 | 遥测/调试 |
+| 网络 `bbox` | JSON object 或 null | `{x,y,w,h}`，均在 `[0,1]`；不可绘制时为 null | Family Desktop Canvas |
+
+表 B-7 目标观测及网络投影的关键字段。网络 `vision_target` 还含 `protocol_version`、`frame_sequence`、`capture_timestamp`、`published_at`、`present`、`fresh`、`state`、`age_ms`、检测/跟踪置信度和遥测字段。服务端在缺失、过期、SEARCHING/LOST 时输出 `bbox:null`；家属端还按收到时间与 `age_ms` 隐藏旧框。AI 视野使用最新 JPEG 与最新有效观测，不保证逐帧严格配对。SoT：LongPet `src/model/VisionModels.h`、`src/model/VisionModels.cpp`、`src/platform/FamilyVisionProtocol.cpp`；Family `src/renderer/vision-monitor-adapter.js`。
+
+#### B.6 本地数据与配置索引
+
+| Item | 用途与实际范围 | 默认/解析规则 | 敏感性及 SoT |
+| --- | --- | --- | --- |
+| SQLite `schema_meta` | schema 版本；当前 v1 | 随数据库创建 | 非敏感；LongPet: `src/data/DatabaseManager.cpp` |
+| SQLite `reminders` | 提醒定义、启用、revision、创建/更新时间 | Repository 维护 | 含个人日程；LongPet: `ReminderRepository.cpp` |
+| SQLite `reminder_events` | 提醒计划、完成和状态事件 | 关联提醒 ID | 含个人行为；LongPet: `ReminderRepository.cpp` |
+| SQLite `care_events` | 饮水、活动、交互等实际写入事件及来源 | CareService 记录 | 含照护行为；LongPet: `CareEventRepository.cpp` |
+| SQLite `settings` | 音量、亮度、宠物风格等键值 | SettingsService 维护 | 一般配置；LongPet: `SettingsRepository.cpp` |
+| `LONGPET_DATABASE_PATH` | SQLite 文件路径 | 未覆盖时 Qt `AppLocalDataLocation/longpet.db` | 路径可能暴露部署信息；LongPet: `Application.cpp` |
+| AI 配置 `LONGPET_AI_CONFIG` | ASR/LLM/TTS 分项 Provider、Base URL、模型、Key；`history_turns` 等 | Linux 默认 `/etc/longpet/ai.ini`，环境变量可覆盖具体项 | 含密钥；LongPet: `AiConfigRepository.cpp`、`deploy/配置说明.md` |
+| 天气配置 `LONGPET_WEATHER_CONFIG` | Host、Key、坐标、刷新与 stale 时限 | Linux 默认 `/etc/longpet/longpet-weather.ini`，环境变量可覆盖 | 含密钥与位置；LongPet: `WeatherConfigRepository.cpp` |
+| `LONGPET_FAMILY_LINK_ADDRESS/PORT/TOKEN` | FamilyLink 监听与长期 Bearer | 地址未设时回环，默认端口 8787；远程监听需 Token | Token 敏感；LongPet: `Application.cpp`、`FamilyLinkController.cpp` |
+| `LONGPET_VISION_MODEL_PATH` 与视觉开关 | 选择模型文件、启停 Vision | 环境变量优先于 Adapter 默认路径 | 模型文件需版本管理；LongPet: `VisionDetectorFactory.cpp`、`TinyissimoYoloAdapter.cpp` |
+| `LONGPET_MOTION_ENABLED/DEVICE` | Motion 开关与 UART 节点 | 默认关闭；启用后由部署指定设备 | 设备访问受系统权限约束；LongPet: `Application.cpp`、`deploy/longpet.service` |
+| Qt/音视频设备环境 | `QT_QPA_PLATFORM`、触摸输入、相机和 ALSA 设备选择 | 板端 service 设置，Adapter 读取 | 设备路径不含账号；LongPet: `deploy/longpet.service`、`src/platform/` |
+| AI 对话历史、天气快照、通话/视觉/运动状态 | 当前进程或会话内状态 | 重启不从 SQLite 恢复 | 可能含敏感内容；LongPet: 对应 Service/模型 |
+
+表 B-8 本地数据、运行路径与配置。数据库无“AI 长期记忆”或“用户画像”表；训练数据和模型权重是文件资产，非业务 SQLite 实体。板端 service 中的实际路径随部署变化，本表不载入个人目录或真实凭据。
+
+#### B.7 接口错误与降级语义索引
+
+| Interface | 典型失败或过期 | 产品行为 | 恢复/安全边界 |
+| --- | --- | --- | --- |
+| FamilyLink REST | 请求超时、未鉴权、连接断开 | 标记设备不可达，不把缓存状态伪装为实时在线 | 重连后重新 GET 状态；写入需设备成功响应 |
+| 提醒与设置 | `expectedRevision` 不匹配或能力不可用 | 409/503 与明确提示，不静默覆盖/假报已应用 | 刷新最新版本或修复设备能力后重试 |
+| AI Provider | 超时、鉴权/限流、无效响应、取消 | 当前在线会话报错，TTS 失败可保留文字；已有离线快捷能力仍独立可用，旧回调按 session ID 丢弃 | 重新发起新会话；不把错误数据写入业务库 |
+| 天气 Provider | 网络或响应失败、缓存过期 | 无数据为未知；已有快照标记 stale | 网络恢复补刷，语音引用时说明旧数据时效 |
+| AI 视野 | 摄像头/模型不可用、WS 断开、观测不新鲜 | 停止展示旧画面/人物框或标记不可用 | 重新取得会话与新鲜观测，不沿用旧框 |
+| 通话 | 媒体权限失败、旧 callId/revision、WS 断开 | 通话失败或结束；只在 `connected && mediaReady` 显示接通 | 释放摄像头/音频/Socket 后重新建会话 |
+| 人工远控 | 客户端停止刷新、失焦/断连、UART 或 MCU 状态失效 | STOP 或撤销控制，页面锁定 | 新会话且 MCU 状态有效才可再控制；最终安全以 MCU 为准 |
+| Motion UART | 非法命令、写入失败、STATUS 过期/故障 | 不把最后命令当作已执行，退出自动或人工控制 | 检查链路与 MCU 状态；故障复位规则见第 11 章 |
+| SQLite | 打开或 schema 迁移失败 | 应用初始化失败，不伪造本地照护数据 | 修复存储/版本后重新启动 |
+
+表 B-9 各接口的失效语义。测试入口为 LongPet `tests/V02Test.cpp`、`tests/VisionV1Test.cpp`、`tests/MotionV1Test.cpp` 和 Family `tests/`；它们证明代码中存在相应校验路径，不应替代另行记录的板端、实机或长期可靠性验收。
 
 ### 附录 C 关键配置参数表
 
