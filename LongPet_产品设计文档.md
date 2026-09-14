@@ -1075,7 +1075,7 @@ CNN 周期纠偏与 Tracker 目前在同一工作线程同步执行，CNN 推理
 
 ## 10 接口与数据设计
 
-LongPet 的接口设计把“用户或算法提出的意图”与“外部系统确认的事实”分开。主程序不让页面、AI 结果或家属端直接改 SQLite、占用媒体设备或向 MCU 写串口，而是通过 Service、数据契约和受控传输边界协作。本章解释这些边界及失效语义；附录 B 给出接口方向、关键字段和可核对的协议索引。接口行为以当前代码及当前协议为准，历史报告中的计划项不自动视为已实现。
+LongPet 的接口设计把“用户或算法提出的意图”与“外部系统确认的事实”分开。主程序不让页面、AI 结果或家属端直接改 SQLite、占用媒体设备或向 MCU 写串口，而是通过 Service、数据契约和受控传输边界协作。本章解释这些边界及失效语义；**附录 B** 给出接口方向、关键字段和可核对的协议索引。接口行为以当前代码及当前协议为准，历史报告中的计划项不自动视为已实现。
 
 ### 10.1 系统接口总体设计与边界
 
@@ -1105,7 +1105,7 @@ flowchart LR
 
 ### 10.3 LongPet—Family Desktop 接口
 
-设备端 `FamilyLinkController` 提供 `/api/v1` 下的 HTTP/JSON 接口，读取状态、设置、提醒和通话快照，并以短时会话入口开放 AI 视野和远控。家属端通过 Electron 主进程的 HTTP Adapter 发业务请求，渲染进程通过 preload/IPC 获取结果；连接信息只向 Renderer 返回 `hasToken` 摘要。当前连接弹窗仍在 Renderer 输入 Token，且成功后未立即清空输入 state，因此不能宣称长期凭据只存在主进程内存。设备端非回环监听要求配置 Bearer Token，未配置时不开放远程监听。当前 HTTP/WS 是受控局域网方案，不代表可直接公网暴露。
+设备端 `FamilyLinkController` 提供 `/api/v1` 下的 HTTP/JSON 接口，读取状态、设置、提醒和通话快照，并以短时会话入口开放 AI 视野和远控。家属端通过 Electron 主进程的 HTTP Adapter 发业务请求，渲染进程通过 preload/IPC 获取结果；连接信息只向 Renderer 返回 `hasToken` 摘要。当前连接弹窗仍在 Renderer 输入 Token；输入状态会在连接信息更新或重新打开弹窗时清空，但输入期间凭据仍短暂存在于 Renderer，不能宣称长期凭据始终只在主进程内存。设备端非回环监听要求配置 Bearer Token，未配置时不开放远程监听。当前 HTTP/WS 是受控局域网方案，不代表可直接公网暴露。
 
 ```mermaid
 flowchart LR
@@ -1120,7 +1120,7 @@ flowchart LR
 
 图 10-2 FamilyLink 控制面与三个实时通道。流连接先通过 HTTP 取得临时会话，再用一次性凭据鉴权。
 
-远程提醒和设置写入经过相同业务 Service 的校验及 revision 冲突检查，设备确认前不能显示“保存成功”。AI 视野用共享摄像头帧和 `vision_target` 元数据；旧框在失效或断流后隐藏。人工远控的底盘命令需要按短周期刷新，松开时先发 STOP；即使客户端无法送达 STOP，服务和 MCU 仍独立处理租约超时。音视频通话以 `callId + expectedRevision` 防止旧动作误作用于新呼叫，只有 `connected && mediaReady` 才视为媒体接通。各接口的路径、消息和错误列于附录 B.3。
+远程提醒和设置写入经过相同业务 Service 的校验及 revision 冲突检查，设备确认前不能显示“保存成功”。AI 视野复用摄像头帧，并在 Vision 推理运行且产生观测时发送 `vision_target` 元数据；监看会话或画面连接成功本身不等于本地人物检测已启动，旧框在失效或断流后隐藏。人工远控的底盘命令需要按短周期刷新，松开时先发 STOP；即使客户端无法送达 STOP，服务和 MCU 仍独立处理租约超时。音视频通话以 `callId + expectedRevision` 防止旧动作误作用于新呼叫，只有 `connected && mediaReady` 才视为媒体接通。各接口的路径、消息和错误列于附录 B.3。
 
 ### 10.4 AI Provider 与第三方服务接口
 
@@ -1185,13 +1185,13 @@ flowchart LR
 
 ### 10.9 配置管理、令牌与隐私保护
 
-配置分为非敏感运行参数、敏感凭据和模型/设备路径。AI 与天气 INI 由各自 Repository 读取，环境变量可覆盖 Provider、模型、超时、密钥等值；FamilyLink 监听地址、端口与 Token 由启动配置决定；数据库路径和视觉模型路径也可覆盖。板端 `longpet.service` 为服务指定运行用户、补充设备组和必要环境，密钥适合通过受限配置或 service drop-in 注入，不应进入源码、公开报告或截图。当前家属端 Electron 主进程 HTTP Adapter 持有后续请求所用的 Bearer Token，连接信息只回传 `hasToken`；但 Renderer 连接弹窗成功后未立即清空本地 Token state，仍有内存残留风险。当前代码未实现自动签发和持久化配对体系。
+配置分为非敏感运行参数、敏感凭据和模型/设备路径。AI 与天气 INI 由各自 Repository 读取，环境变量可覆盖 Provider、模型、超时、密钥等值；FamilyLink 监听地址、端口与 Token 由启动配置决定；数据库路径和视觉模型路径也可覆盖。板端 `longpet.service` 为服务指定运行用户、补充设备组和必要环境，密钥适合通过受限配置或 service drop-in 注入，不应进入源码、公开报告或截图。当前家属端 Electron 主进程 HTTP Adapter 持有后续请求所用的 Bearer Token，连接信息只回传 `hasToken`；Renderer 输入状态会在连接信息更新或重新打开弹窗时清空，但输入期间仍暂存 Token。当前代码未实现自动签发和持久化配对体系。
 
 短时视觉、通话媒体与远控令牌只用于各自 WebSocket 会话，不应写入 URL、日志或长期业务表。受控局域网的 HTTP/WS 明文链路提供接口鉴权，却不提供传输加密；这属于当前部署边界，跨不可信网络时需要另行设计 HTTPS/WSS 或可信中转。附录 B.6 保留配置项名称和抽象路径，不列真实账号或密钥。
 
 ### 10.10 数据一致性、失效与降级处理
 
-系统采用“过期即失效”的接口语义，而非让旧数据静默冒充现况。提醒与设置写入使用 revision 检测并发修改；语音请求以 session ID 拦截取消后的 ASR/LLM/TTS 回调；天气快照保留来源与更新时间并标记 stale；视觉目标由 `present/fresh/ageMs` 及状态约束；家属端连接断开后不继续展示在线事实或旧框；通话依 `callId/revision/mediaReady` 区分信令成功与媒体接通；MotionService 同时检查 UART 与 MCU 状态，失联时撤销控制权。
+系统采用“过期即失效”的接口语义，而非让旧数据静默冒充现况。提醒与设置写入使用 revision 检测并发修改；语音请求以 session ID 拦截取消后的 ASR/LLM/TTS 回调；天气快照保留来源与更新时间并标记 stale；视觉目标由 `present/fresh/ageMs` 及状态约束；家属端连接断开后不继续展示在线事实或旧框，HTTP 401 鉴权失败则应与网络不可达区分；通话依 `callId/revision/mediaReady` 区分信令成功与媒体接通；MotionService 同时检查 UART 与 MCU 状态，失联时撤销控制权。
 
 ```mermaid
 flowchart LR
@@ -1494,7 +1494,9 @@ Family Desktop 发起远控会话，LongPet 校验会话身份、串口状态、
 
 #### B.3 FamilyLink / Family Desktop 接口
 
-FamilyLink REST 使用 UTF-8 JSON，路径前缀 `/api/v1`。设备默认回环监听；远程监听需配置长期 Bearer Token，请求头为 `Authorization: Bearer <TOKEN>`。家属端由 Electron 主进程 HTTP Adapter 发后续请求，Renderer 经 preload/IPC 调用并只接收连接的 `hasToken` 摘要；但连接弹窗输入 Token 后，成功路径目前未清空 Renderer 本地 state。时间使用 UTC ISO 8601，写操作的 revision 或 `callId` 应以最近设备快照为准。
+FamilyLink REST 使用 UTF-8 JSON，路径前缀 `/api/v1`。设备默认回环监听；远程监听需配置长期 Bearer Token，请求头为 `Authorization: Bearer <TOKEN>`。家属端由 Electron 主进程 HTTP Adapter 发后续请求，Renderer 经 preload/IPC 调用；连接信息中的令牌只以 `hasToken` 布尔摘要返回。Token 输入状态在连接信息更新或重新打开弹窗时清空，但输入期间仍经过 Renderer。时间戳字段使用 UTC ISO 8601；提醒的 `scheduledDate` 和 `timeOfDay` 分别是日期和本地日内时间，不是 UTC 时间戳。写操作的 revision 或 `callId` 应以最近设备快照为准。
+
+当前非 2xx 响应的 JSON 结构为 `{"error":{"code":"...","message":"...","details":{...}}}`，其中 `details` 可省略。`FamilyLinkHttpAdapter` 和 `FamilyLinkController` 已处理 400、401、404、405、409、413、422、431、500、503 等状态；Family 侧接口文档中列作建议的 403、429 不应被理解为设备当前已实现的返回路径。409 除 revision 冲突外也可表示设备忙或自动跟随模式切换被拒绝，客户端应检查 `error.code`。
 
 | Interface | 方向/传输 | 请求或事件与核心字段 | 失败语义 / SoT |
 | --- | --- | --- | --- |
@@ -1503,8 +1505,8 @@ FamilyLink REST 使用 UTF-8 JSON，路径前缀 `/api/v1`。设备默认回环�
 | `GET /reminders`；`POST /reminders` | 家属端 ↔ 设备，HTTP | `items`；草稿的 type、title、timeOfDay、scheduledDate、repeatRule、enabled | 校验失败或能力不可用应显式返回；同上 |
 | `PUT /reminders/{id}`；`DELETE /reminders/{id}?expectedRevision=...` | 家属端 ↔ 设备，HTTP | 完整草稿及 `expectedRevision`；删除以查询参数携带版本 | 不匹配 409，不能覆盖新数据；同上 |
 | `GET/POST /video-call`；`POST /video-call/actions` | 家属端 ↔ 设备，HTTP | `mode`；`callId`、`expectedRevision`、`action`；快照含 `mediaPort/mediaToken/mediaReady` | 已占用、旧 callId 或 revision 被拒绝；LongPet: `VideoCallService.cpp`、`FamilyLinkController.cpp` |
-| `POST /vision-monitor/sessions` | 家属端 → 设备，HTTP | 返回 `sessionId/sessionToken/port/protocolVersion/frameRate/expiresAt` | 单 viewer 忙时 409，未启动 503；LongPet: `FamilyLinkController.cpp`、`FamilyVisionStreamAdapter.cpp` |
-| `POST /motion-control/sessions` | 家属端 → 设备，HTTP | 返回 `sessionId/sessionToken/port/protocolVersion/refreshIntervalMs/leaseTimeoutMs/expiresAt` | 已占用 409，服务不可用 503；LongPet: `FamilyLinkController.cpp`、`FamilyMotionControlAdapter.cpp` |
+| `POST /vision-monitor/sessions` | 家属端 → 设备，HTTP | 返回 `sessionId/sessionToken/port/protocolVersion/mediaFrameVersion/frameRate/expiresAt` | 单 viewer 忙时 409，监看服务未启动时 503；会话签发不代表 Vision 推理已启动；LongPet: `FamilyLinkController.cpp`、`FamilyVisionStreamAdapter.cpp` |
+| `POST /motion-control/sessions` | 家属端 → 设备，HTTP | 返回 `sessionId/sessionToken/port/protocolVersion/mediaFrameVersion/refreshIntervalMs/leaseTimeoutMs/defaultSpeed/headStepUs/expiresAt` | 已占用 409，服务不可用 503；LongPet: `FamilyLinkController.cpp`、`FamilyMotionControlAdapter.cpp` |
 | `GET/PUT /automatic-head-tracking` | 家属端 ↔ 设备，HTTP | 兼容接口；`enabled` 与当前 `active/state` | 不具备能力时 503；LongPet: `FamilyLinkController.cpp` |
 | `GET/PUT /automatic-tracking` | 家属端 ↔ 设备，HTTP | `mode=DISABLED/HEAD_ONLY/PERSON_FOLLOW`；返回 followState、distanceClass、targetAgeMs、headOffset 等 | 条件不满足时拒绝模式切换；LongPet: `FamilyLinkController.cpp`；Family: `FAMILY_LINK_API.md` 第 12 节 |
 
@@ -1516,9 +1518,9 @@ FamilyLink REST 使用 UTF-8 JSON，路径前缀 `/api/v1`。设备默认回环�
 | `/media/v1`，通常端口 8788 | 通话快照给出 `mediaPort/mediaToken`；双方 WebSocket | `DeviceVideo(1)`、`FamilyVideo(2)` JPEG；`DeviceAudio(3)`、`FamilyAudio(4)` PCM；`Control(5)` 鉴权及媒体状态 | 旧 callId/Token、媒体失败或断开使通话结束；SoT: LongPet `VideoCallMediaAdapter.cpp`；Family `VIDEO_CALL_MEDIA_PROTOCOL.md` |
 | `/motion-control/v1`，通常端口 8790 | HTTP 签发短时会话；Renderer → 设备首帧 `authenticate`；双向状态 | `Control(5)` JSON：`chassis`、`head`、`stop`、`release`；设备返回 `control_started`、`motion_status`、`error` | 断开撤销控制；MOVE 不再刷新则停车；SoT: LongPet `FamilyMotionControlAdapter.cpp`；Family `FAMILY_LINK_API.md` 第 8 节 |
 
-表 B-5 三种 WebSocket 通道。端口可由服务配置或快照决定，客户端按已配置设备 URL 的主机及返回端口推导地址，不把令牌放在 URL。三者复用 `MediaFrameProtocol`：每个 WebSocket Binary Message 为一个 LPMF 帧，24 字节大端帧头依次为 `LPMF` magic(4)、version(1)、streamType(1)、flags(2)、sequence(4)、Unix 微秒时间戳(8)、payloadLength(4)；payload 最大 2 MiB。Control 的 payload 为 UTF-8 JSON。通话媒体的当前设计详见 Family: `docs/VIDEO_CALL_MEDIA_PROTOCOL.md`。该文档约定 `/media/v1`，但当前 `VideoCallMediaAdapter` 只校验会话内 `callId` 与媒体 Token，尚未校验 WebSocket 请求路径；视觉和远控 Adapter 已校验各自路径。AI 视野与远控的具体鉴权字段以对应 Adapter 和测试为准。
+表 B-5 三种 WebSocket 通道。端口可由服务配置或快照决定，客户端按已配置设备 URL 的主机及返回端口推导地址，不把令牌放在 URL。三者复用 `MediaFrameProtocol`：每个 WebSocket Binary Message 为一个 LPMF 帧，24 字节大端帧头依次为 `LPMF` magic(4)、version(1)、streamType(1)、flags(2)、sequence(4)、Unix 微秒时间戳(8)、payloadLength(4)；payload 最大 2 MiB。Control 的 payload 为 UTF-8 JSON。通话媒体的当前设计详见 Family: `docs/VIDEO_CALL_MEDIA_PROTOCOL.md`。该文档约定 `/media/v1`，但当前 `VideoCallMediaAdapter` 只校验会话内 `callId` 与媒体 Token，尚未校验 WebSocket 请求路径；视觉和远控 Adapter 已校验各自路径。三种通道的鉴权字段见下段。
 
-视觉与远控首个 Control 消息使用 `type=authenticate`、`protocol_version`、`session_id`、`token`；通话媒体首个 Control 消息使用 `type=authenticate`、`callId`、`token`。视觉 Control 元数据以 `type=vision_target` 携带帧序号、新鲜度、状态与可空 bbox。远控 `chassis` 需 `direction/speed`，`head` 需 `action/step_us`（回中除外），`stop` 无参数；状态反馈以 `motion_status` 携带 `uart_available/mcu_online/fault/mode/motion/updated_at` 等。通话音频为 PCM S16_LE、16 kHz、单声道、20 ms 帧；视频为 JPEG。通话、视觉和远控的短时会话不可互换。
+视觉与远控首个 Control 消息使用 `type=authenticate`、`protocol_version`、`session_id`、`token`；通话媒体首个 Control 消息使用 `type=authenticate`、`callId`、`token`。视觉 Control 元数据以 `type=vision_target` 携带帧序号、新鲜度、状态与可空 bbox；若 `LONGPET_VISION_ENABLED` 未开启，监看画面仍可能连通，但不会因此自动产生人物推理结果。远控 `chassis` 需 `direction/speed`，`head` 需 `action/step_us`（回中除外），`stop` 无参数；状态反馈以 `motion_status` 携带 `uart_available/mcu_online/fault/mode/motion/updated_at` 等。通话音频为 PCM S16_LE、16 kHz、单声道、20 ms 帧；视频为 JPEG。通话、视觉和远控的短时会话不可互换。
 
 #### B.4 AI Provider 与天气接口
 
@@ -1567,7 +1569,7 @@ FamilyLink REST 使用 UTF-8 JSON，路径前缀 `/api/v1`。设备默认回环�
 | AI 配置 `LONGPET_AI_CONFIG` | ASR/LLM/TTS 分项 Provider、Base URL、模型、Key；`history_turns` 等 | Linux 默认 `/etc/longpet/ai.ini`，环境变量可覆盖具体项 | 含密钥；LongPet: `AiConfigRepository.cpp`、`deploy/配置说明.md` |
 | 天气配置 `LONGPET_WEATHER_CONFIG` | Host、Key、坐标、刷新与 stale 时限 | Linux 默认 `/etc/longpet/longpet-weather.ini`，环境变量可覆盖 | 含密钥与位置；LongPet: `WeatherConfigRepository.cpp` |
 | `LONGPET_FAMILY_LINK_ADDRESS/PORT/TOKEN` | FamilyLink 监听与长期 Bearer | 地址未设时回环，默认端口 8787；远程监听需 Token | Token 敏感；LongPet: `Application.cpp`、`FamilyLinkController.cpp` |
-| `LONGPET_VISION_MODEL_PATH` 与视觉开关 | 选择模型文件、启停 Vision | 环境变量优先于 Adapter 默认路径 | 模型文件需版本管理；LongPet: `VisionDetectorFactory.cpp`、`TinyissimoYoloAdapter.cpp` |
+| `LONGPET_VISION_ENABLED`、`LONGPET_VISION_DETECTOR`、`LONGPET_VISION_MODEL_PATH` | 启停本地推理、选择 Detector 与模型文件 | `LONGPET_VISION_ENABLED` 默认关闭；Detector 默认 Tinyissimo，模型路径可覆盖 Adapter 默认值；AI 视野流可独立于推理连接 | 模型文件需版本管理；LongPet: `Application.cpp`、`VisionDetectorFactory.cpp`、`TinyissimoYoloAdapter.cpp` |
 | `LONGPET_MOTION_ENABLED/DEVICE` | Motion 开关与 UART 节点 | 默认关闭；启用后由部署指定设备 | 设备访问受系统权限约束；LongPet: `Application.cpp`、`deploy/longpet.service` |
 | Qt/音视频设备环境 | `QT_QPA_PLATFORM`、触摸输入、相机和 ALSA 设备选择 | 板端 service 设置，Adapter 读取 | 设备路径不含账号；LongPet: `deploy/longpet.service`、`src/platform/` |
 | AI 对话历史、天气快照、通话/视觉/运动状态 | 当前进程或会话内状态 | 重启不从 SQLite 恢复 | 可能含敏感内容；LongPet: 对应 Service/模型 |
@@ -1578,17 +1580,18 @@ FamilyLink REST 使用 UTF-8 JSON，路径前缀 `/api/v1`。设备默认回环�
 
 | Interface | 典型失败或过期 | 产品行为 | 恢复/安全边界 |
 | --- | --- | --- | --- |
-| FamilyLink REST | 请求超时、未鉴权、连接断开 | 标记设备不可达，不把缓存状态伪装为实时在线 | 重连后重新 GET 状态；写入需设备成功响应 |
+| FamilyLink REST 传输 | 请求超时、连接失败或断开 | 标记设备不可达，不把缓存状态伪装为实时在线 | 重连后重新 GET 状态；写入需设备成功响应 |
+| FamilyLink REST 鉴权 | HTTP 401、`AUTHENTICATION_REQUIRED` | 提示令牌无效或缺失，不把已收到的 401 解释成设备离线 | 修正令牌后重试；不得绕过鉴权继续写入 |
 | 提醒与设置 | `expectedRevision` 不匹配或能力不可用 | 409/503 与明确提示，不静默覆盖/假报已应用 | 刷新最新版本或修复设备能力后重试 |
 | AI Provider | 超时、鉴权/限流、无效响应、取消 | 当前在线会话报错，TTS 失败可保留文字；已有离线快捷能力仍独立可用，旧回调按 session ID 丢弃 | 重新发起新会话；不把错误数据写入业务库 |
 | 天气 Provider | 网络或响应失败、缓存过期 | 无数据为未知；已有快照标记 stale | 网络恢复补刷，语音引用时说明旧数据时效 |
-| AI 视野 | 摄像头/模型不可用、WS 断开、观测不新鲜 | 停止展示旧画面/人物框或标记不可用 | 重新取得会话与新鲜观测，不沿用旧框 |
+| AI 视野 | 摄像头不可用、WS 断开、Vision 未启用或观测不新鲜 | 摄像头/WS 失败时停止展示旧画面；仅推理未启用或无新鲜观测时可继续显示实时画面，但不显示旧人物框 | 检查 `LONGPET_VISION_ENABLED` 与模型状态，等待新鲜观测；断流后重新取得会话 |
 | 通话 | 媒体权限失败、旧 callId/revision、WS 断开 | 通话失败或结束；只在 `connected && mediaReady` 显示接通 | 释放摄像头/音频/Socket 后重新建会话 |
 | 人工远控 | 客户端停止刷新、失焦/断连、UART 或 MCU 状态失效 | STOP 或撤销控制，页面锁定 | 新会话且 MCU 状态有效才可再控制；最终安全以 MCU 为准 |
 | Motion UART | 非法命令、写入失败、STATUS 过期/故障 | 不把最后命令当作已执行，退出自动或人工控制 | 检查链路与 MCU 状态；故障复位规则见第 11 章 |
 | SQLite | 打开或 schema 迁移失败 | 应用初始化失败，不伪造本地照护数据 | 修复存储/版本后重新启动 |
 
-表 B-9 各接口的失效语义。测试入口为 LongPet `tests/V02Test.cpp`、`tests/VisionV1Test.cpp`、`tests/MotionV1Test.cpp` 和 Family `tests/`；它们证明代码中存在相应校验路径，不应替代另行记录的板端、实机或长期可靠性验收。
+表 B-9 各接口的失效语义。此处描述运行时对外行为；自动化测试和实机验收另见第 13 章。
 
 ### 附录 C 关键配置参数表
 
