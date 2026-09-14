@@ -2,7 +2,7 @@
 
 | 文档信息 | 内容 |
 | --- | --- |
-| 文档版本 | V0.8（编写中） |
+| 文档版本 | V0.9（编写中） |
 | 产品名称 | LongPet |
 | 文档类型 | 产品设计文档 |
 
@@ -18,6 +18,7 @@
 | V0.6 | 2026-09-14 | 完成第十章正文和附录B |
 | V0.7 | 2026-09-14 | 完成第四章正文 |
 | V0.8 | 2026-09-14 | 完成第 5 章硬件系统设计与附录 D 硬件连接摘要 |
+| V0.9 | 2026-09-14 | 添加原型实拍精修第 5 章和附录 D |
 ## 摘要
 
 <!-- 待正文完成后撰写。 -->
@@ -103,8 +104,8 @@
   - 5.9 头部舵机机构
   - 5.10 电源、存储与外部接口
   - 5.11 硬件连接关系与信号边界
-  - 5.12 关键物料选型依据
-  - 5.13 当前硬件限制与工程化缺口
+  - 5.12 关键物料选型
+  - 5.13 原型验证成果与工程化方向
 - 6 LoongArch 系统软件平台设计
   - 6.1 目标板约束与平台设计目标
   - 6.2 LoongArch AI 生态的兼容性边界
@@ -533,133 +534,205 @@ LongPet 围绕单核 LoongArch 平台的资源条件组合本地基础能力、�
 
 ## 5 硬件系统设计
 
-本章描述当前原型的实物配置、供电域与连接边界。板卡规格及实机枚举采用本轮确认资料；运动固件以 Motion MCU 仓库 `main` 分支（`b733bfc`）的 `xiao_che/xiao_che.ino`、`docs/firmware-baseline.md`、`docs/motion-protocol-v2.md` 和 `docs/bench-test-report.md` 为准；主控设备链路以 LongPet 主程序 `main` 的 `deploy/longpet.service`、`deploy/配置说明.md` 及板端联调报告为准。下文的“已验证”仅指有明确实机记录的项目，未完成的验收不据此推定通过；具体引脚与节点见附录 D。
+LongPet 原型采用龙芯 2K0300 主控与 ESP32-S3 运动 MCU 协同架构，将本机交互、端侧感知和受控运动集成到同一硬件平台。本章说明模块组成、连接方式与选型理由；引脚和设备节点见附录 D。板卡规格采用《龙芯 2K0300 先锋派产品规格书》V1.0，运动功能测试结果见[《LongPet 产品运动功能测试报告》V1.3](LongPet_产品运动功能测试报告_2026-09-13_V1.3.docx)。
 
 ### 5.1 硬件总体组成
 
-LongPet 采用龙芯主控与独立运动 MCU 的分工：龙芯 2K0300 运行 Linux 和应用，连接显示触摸、USB 摄像头、USB 音频及网络，负责界面、感知、通信和运动意图；ESP32-S3 接收双向 UART 命令，控制舵机与四轮执行器，并采集编码器、IMU。电池供给执行侧，龙芯当前使用独立 5 V 充电宝。图 5-1 展示功能连接，图 5-2 展示供电与信号路径。
+LongPet 以 LoongArch 原生平台承载 Qt6 老人端应用、本地语音唤醒和视觉推理，连接触控屏、摄像头、音频设备及家庭网络，并驱动头部和四轮底盘。原型选用成熟开发板与标准外设，缩短硬件接入周期，使开发和验证聚焦适老交互、端侧感知与运动协同。
+
+系统采用“龙芯主控 + ESP32-S3 运动控制 MCU”结构：龙芯负责 UI、AI、网络和高层行为，MCU 负责执行器时序、反馈采集与失效停车。摄像头和音频由多个业务共享，在控制硬件规模的同时支持视觉、语音、通话等功能。图 5-1 展示当前业务使用的硬件及连接。
 
 ```mermaid
 flowchart LR
-    subgraph H["人机交互与感知"]
-        LCD["7 英寸 RGB 显示 / I2C 触摸"]
-        CAM["OV2735 USB UVC 摄像头"]
-        AUD["USB 声卡 / 麦克风 / 音箱"]
-        WIFI["USB Wi-Fi"]
-    end
-    SOC["龙芯 2K0300<br/>应用与策略"]
-    MCU["ESP32-S3<br/>实时运动控制"]
-    DRV["两块 TB6612<br/>四路电机驱动"]
-    MOTOR["四个 TT 电机 / 编码器<br/>四个麦克纳姆轮"]
-    HEAD["头部舵机"]
-    IMU["MPU6500-compatible IMU"]
-    DHT["DHT22 预留"]
-    LCD <--> SOC
-    CAM --> SOC
-    AUD <--> SOC
-    WIFI <--> SOC
-    SOC <-->|"UART2 / Serial1"| MCU
-    MCU --> DRV --> MOTOR
-    MOTOR -->|"编码器反馈"| MCU
-    MCU --> HEAD
-    IMU -->|"I2C"| MCU
-    DHT -.-> MCU
+    CAM["头部 USB 摄像头"] -->|"USB UVC"| SOC["龙芯 2K0300 主控<br/>Linux / UI / AI / 网络"]
+    MIC["3.5 mm 麦克风"] --> AUDIO["C-Media USB 声卡"]
+    AUDIO --> SPK["有线桌面音箱"]
+    AUDIO <-->|"USB Audio"| SOC
+    SOC -->|"RGB"| LCD["7 英寸显示屏"]
+    TOUCH["电容触摸"] -->|"I2C"| SOC
+    SOC <-->|"USB"| WIFI["Realtek Wi-Fi"]
+    WIFI <-->|"无线网络"| NET["家庭网络"]
+    SOC <-->|"双向 UART"| MCU["ESP32-S3<br/>执行与反馈控制"]
+    MCU -->|"方向 / PWM / STBY"| DRV["两块 TB6612"]
+    DRV -->|"电机驱动输出"| MOTOR["四个减速电机<br/>四轮麦克纳姆底盘"]
+    ENC["四路电机编码器"] -->|"双相反馈"| MCU
+    MCU <-->|"I2C"| IMU["MPU6500-compatible IMU"]
+    MCU -->|"舵机控制脉冲"| HEAD["单自由度 yaw 头部"]
 ```
 
-**图 5-1 LongPet 原型硬件系统组成。** 实线表示当前使用的接口，虚线表示已安装但未纳入正式业务的传感器。图为工程连接示意，不代表实物布局；具体线束见附录 D。
+**图 5-1 LongPet 硬件总体组成与双处理器分工。** 箭头表示信号或电机驱动连接，供电见图 5-2；编码器安装于电机侧。DHT22 用于固件诊断采样，接线见附录 D。
+
+| 功能模块 | 当前硬件组成 | 对产品的作用 |
+| --- | --- | --- |
+| 主控与本地存储 | 龙芯 2K0300 开发板、板载内存与 eMMC | 承载老人端应用、端侧感知与业务数据 |
+| 本机交互 | 7 英寸触控屏、麦克风、USB 声卡及音箱 | 触摸操作、表情与提醒、语音交互和通话 |
+| 视觉感知 | 头部前置 USB UVC 摄像头 | 人物检测、Tracker、AI 视野、通话和视觉运动输入 |
+| 联网 | Realtek USB Wi-Fi | 连接 Family Desktop 和在线服务 |
+| 运动执行与反馈 | ESP32-S3、两块 TB6612、四电机与编码器、IMU、头部舵机 | 执行底盘和头部动作，形成轮速与航向反馈 |
+| 供电 | 执行侧电池及降压路径、主控独立充电宝 | 支持当前原型分路运行 |
+
+**表 5-1 当前硬件功能模块与产品职责。** 各模块围绕本机交互、感知、通信和运动执行形成完整的原型硬件链路。
 
 ### 5.2 龙芯 2K0300 主控平台
 
-主控为龙芯 2K0300 先锋派，单核 LA264、主频 1 GHz，板载 512 MB DDR4 和 8 GB eMMC（本轮确认的板卡配置）。它承担 Qt 图形界面、音视频采集与播放、人物感知、网络服务和本地数据管理。单核计算与内存资源决定了摄像头共享、轻量模型和异步服务的设计取向，软件资源调度见第 6、7、9 章。eMMC 承载系统、应用及本地数据，不能据此推定整机具备电池电量检测或掉电保护。
+原型主控为**龙芯 2K0300 先锋派开发板**，搭载龙芯 2K0300（Loongson 2K0300）SoC。下文简称“龙芯 2K0300 主控”。部分底层软件沿用 `2K300`、`LS2K300`、`2K300-PAI` 标识，均对应本项目使用的平台。
+
+该平台满足赛题的 LoongArch 原生运行要求，并以 Linux 环境和外设接口承载 Qt6、ONNX Runtime 与多媒体链路。项目针对单核算力采用轻量模型和受控并发调度，使图形界面、语音与视觉能力在同一主控上协同运行；软件适配见第 6 章。
+
+| 项目 | 当前平台配置 | 对 LongPet 的意义 |
+| --- | --- | --- |
+| CPU 与架构 | 单核 LA264，LoongArch64，标称 1.0 GHz；目标平台无 LSX/LASX | 原生承载 Linux 应用；端侧推理受单核与指令集约束 |
+| 内存 | 板载 512 MB DDR4；当前系统可见约 369 MiB | 物理容量与系统可用量分开计算，需为 UI、媒体和模型控制内存预算 |
+| 主存储 | 板载 8 GB eMMC；2 MB SPI NOR 用于启动固件 | 系统、应用和本地数据在主控侧管理，存储分工见 5.10 |
+| USB | 板卡提供四个 USB 2.0 HOST 接口，当前连接相机、声卡等；Wi-Fi 也走 USB 总线 | 使用 Linux 成熟外设链路，按共享总线规划带宽 |
+| 显示与触摸 | 24 位 RGB LCD 与 I2C 触摸，当前面板 1024×600 | 支持本机适老操作与陪伴反馈 |
+| 音频 | 当前使用 C-Media USB 声卡录放 | 已验证录放链路与板载模拟音频方案分开 |
+| 网络 | 当前主要使用 USB Wi-Fi；板卡另提供千兆 RJ45 | 满足家庭联网，有线口提供后续接入选择 |
+| 执行侧连接 | 40PIN GPIO 排针复用 UART2，接运动 MCU | 主控只交换控制和状态，执行器由 MCU 管理 |
+
+**表 5-2 当前主控配置与产品设计意义。** 表中区分板卡标称规格与当前系统工作状态；目标指令集、内存和 Linux 运行环境详见第 6 章。
+
+板卡还提供 TF、SPI、CAN、ADC、调试和看门狗等扩展资源，为后续外设接入留有空间。RTC 已实现系统读写；断电保持需结合后备电池装配复测，见附录 D。
 
 ### 5.3 显示与触摸模块
 
-显示采用正点原子 7 英寸 IPS RGB LCD，面板分辨率 1024×600、24 位 RGB；触摸通过 I2C 电容触摸控制器接入，实机枚举为 Goodix Capacitive TouchScreen。本轮显示/触摸实物信息与 LongPet 板端报告共同确认了 1024×600 显示及 Goodix 触摸链路。当前部署将 Qt `linuxfb` 指向 `/dev/fb0`，`evdevtouch` 指向 `/dev/input/event0`；framebuffer 的 32 位像素存储格式是 Linux 侧缓冲格式，不应与面板 24 位 RGB 接口位宽混同。屏幕用于老人端触摸交互；触摸节点、方向和映射以最终系统枚举及装配校准为准。
+当前原型采用正点原子 7 英寸 IPS RGB 触控显示模块，分辨率为 1024×600；触摸经 I2C 接入，板端识别为 Goodix Capacitive TouchScreen。屏幕装在头部正面，既提供直接触摸操作，也呈现陪伴表情、提醒、通话画面和设备状态。
+
+7 英寸屏幕与头部结构匹配，横向布局可容纳大字号、清晰按钮和状态区，支持老人直接完成常用操作。1024×600 兼顾界面信息量与单核主控的显示负载；适老可读性由 UI 设计和使用测试继续验证。当前 Qt6 使用 framebuffer 与 evdev 触摸链路，设备节点及 FPC 定义见 D.6。
 
 ### 5.4 摄像头模块
 
-当前原型使用 SenSor OV2735 方案 200 万像素 USB UVC 摄像头，2.8 mm 镜头、约 100°视场角。实机节点为 `/dev/video0`，当前应用采集配置/板端验证口径为 640×480 MJPEG、30 FPS；设备支持的 1920×1080 MJPEG、30 FPS 是能力上限，不代表应用在该分辨率运行。LongPet 通过共享采集链路向 Vision 与视频通话提供画面，部署配置设置 `LONGPET_CAMERA_DEVICE=/dev/video0` 和 180°旋转，以匹配当前倒装方式。接口速查见表 D-6；共享与资源互斥见第 7、8 章。
+原型采用 SenSor OV2735 方案的 200 万像素 USB UVC 摄像头，安装在头部正面、屏幕下方，随头部 yaw 转动调整水平视向。倒装画面通过配置旋转 180°校正；头部当前为单自由度结构。镜头标称参数及设备识别信息见 D.7。
+
+同一摄像头为人物检测、Tracker 跟踪、家属端 AI 视野、视频通话、自动跟头和人物跟随提供画面。USB UVC 可复用成熟的 Linux V4L2 链路，降低多业务接入成本。当前 GStreamer/V4L2 以 640×480 MJPEG、请求 30 FPS 采集；检测与网络显示按各自处理链路调度。设备模式和节点见 D.7，资源共享与仲裁见第 7、8 章。
 
 ### 5.5 麦克风与音频输出模块
 
-3.5 mm 桌面麦克风与联想有线桌面音箱接到同一块 C-Media USB Audio Device；实机已枚举录音和播放 PCM。当前应用对录放均指定 `plughw:CARD=Device,DEV=0`，并以 `hw:CARD=Device` 访问 mixer。该原型无外置功放，板载 ES8388 不在当前正式音频链路。USB 声卡的 ALSA 名称和设备序号可能随枚举改变，部署时需核对。主程序当前音量适配器按 `PCM`、`Speaker` 顺序识别 mixer 控件；板端报告记录了 `Speaker` 控件可用于 USB 声卡音量调节。
+原型采用“3.5 mm 桌面麦克风 + C-Media USB 声卡 + 联想有线桌面音箱”音频方案。麦克风和音箱分别接入声卡录音与播放端，USB 声卡连接龙芯主控，形成统一的录放链路。
+
+该链路覆盖本地唤醒、语音交互、离线陪伴、提醒及通话，多个业务共用已联调的输入输出设备。当前正式录放使用 USB 声卡；板卡规格中的 ES8388 属于另一条板载音频路径。ALSA 设备和音量控件见 D.7，音频资源仲裁见第 7、8 章。
 
 ### 5.6 网络通信模块
 
-当前主要网络通道是开发板所带 USB Wi-Fi，实机枚举 Realtek `0bda:f179`，Linux 接口为 `wlan0`；应用通过 NetworkManager 获取连接状态并进行家庭局域网与在线服务通信。板载 RJ45 可作为有线接口，但本轮原型的主要联网事实为 Wi-Fi。已有部署资料记录了 `wlan0` 在某些启动情况下需恢复服务介入，联网状态仍应以运行时连接结果为准。网络协议、安全边界见第 4、10 章。
+原型主要通过开发板配套的 Realtek USB Wi-Fi 模块联网。板端枚举为 `0bda:f179`，接口为 `wlan0`，驱动标识为 RTL8188FU / `rtl8xxxu`；板卡物料标识为 RTL8188FTV。两类名称分别服务于设备维护和镜像适配。
+
+Wi-Fi 承担 FamilyLink 家庭通信、音视频通话、在线 AI Provider 和天气服务访问。板载千兆 RJ45 为后续有线接入提供选择。无线接口异常启动后的恢复机制已验证；应用通过运行时状态反馈网络与服务可达性，网络部署边界见第 4、10 章。
 
 ### 5.7 ESP32-S3 运动控制模块
 
-运动板基于 ESP32-S3-WROOM 系列模组，实物丝印 `ESP32S3WROOMR8N2`，固件编译目标为 `ESP32S3 Dev Module`。板卡未提供可核对的完整开发板型号，因此不由丝印推断 Flash、PSRAM 或板级稳压参数。ESP32-S3 通过 `Serial1` 与龙芯 UART2 双向通信，共用 115200、8N1、无流控链路；启动、状态和故障诊断也从这一路返回。主控负责意图和权限，MCU 负责模式校验、PWM/方向输出、编码器与航向反馈及停车裁决。
+运动控制板采用 ESP32-S3-WROOM 系列模组，固件编译目标为 `ESP32S3 Dev Module`。实物丝印见 D.3；Flash、PSRAM 等容量参数以最终板卡配置为准。
 
-当前 `main` 固件上电进入 `SAFE`；`HEAD_ONLY` 仅允许目标驱动头部，`MANUAL` 允许持续刷新的底盘 `MOVE` 和独立头部控制，`FOLLOW` 虽接收目标但自动底盘路径仍关闭。链路、手动命令及目标新鲜度三个时间门限均为 500 ms：活动底盘失去合法链路或停止刷新 `MOVE` 会停车，`PING` 不续手动运动租约。以上是 MCU `main` 的代码/协议基线，完整 STOP、断线、故障矩阵尚未逐项实机验收；具体行为以该分支的 `docs/motion-protocol-v2.md` 为准。第 11 章及附录 B 采用的 `FOLLOW_MOVE` 叙述与本分支不同，版本差异列于表 5-2。
+采用第二处理器的原因是将实时执行责任与 Linux 业务负载分离。龙芯处理图像、语音、UI、网络和高层运动意图；ESP32-S3 负责编码器采集、轮速 PID、IMU 航向反馈、方向输出、PWM、驱动使能和头部舵机。执行侧控制周期与停车判断在 MCU 内完成，不依赖 Linux 每次调度都及时到达。
+
+主控与 MCU 通过双向 UART 交换命令和状态。当主控应用卡顿或通信中断时，供电正常的 MCU 可按本地时效规则撤销底盘驱动，降低上层业务波动对运动执行的影响。MCU 失效场景的独立硬件保护属于后续工程化工作；模式、租约与故障恢复见第 11 章。
 
 ### 5.8 电机、驱动、编码器与 IMU
 
-底盘由四个 TT 电机、四个直径 60 mm 麦克纳姆轮构成。电机标称工作范围 3～9 V，原型实际按 5 V 使用；每个电机配 1:48 减速箱及商品标称“13 线”的编码器。两块 TB6612 双路驱动板分别承载 A/B 和 C/D 两路电机；ESP32-S3 输出方向、PWM 和两组 STBY，使停止路径能撤销驱动使能。固件为四个电机提供编码器 HalfQuad 反馈、轮速 PID，并从 I2C `0x68` 的 MPU6500-compatible IMU 获取 Gyro Z 用于航向控制；该 IMU 已实机识别和正常读取。
+底盘由四个带编码器的 TT 减速电机和四个麦克纳姆轮组成，两块 TB6612 双路驱动板分别承载四路电机中的 A/B、C/D 逻辑通道。ESP32-S3 向驱动板提供方向、PWM 和 STBY 使能；电机电流由驱动板输出。每台电机的双相编码器反馈至 MCU，形成轮速控制；MPU6500-compatible IMU 经 I2C 提供 Gyro Z，辅助航向控制。
 
-前进、后退、原地左转与右转已有实机正常记录；左右平移实机存在问题，当前暂缓。四轮安装方位、编码器计数符号与轮速组合仍需复核。“13 线”不直接等于输出轴 13 PPR/CPR；输出轴实际计数分辨率、真实线速度及转角精度均须按减速比、解码方式和实测标定后给出。电机 A/B/C/D 的逻辑通道不能在缺少线束证据时擅自对应左前/右前等物理位置。各通道接线见表 D-3、D-4。
+编码器与 IMU 为轮速和航向控制提供反馈。IMU 按实机 `WHO_AM_I=0x70` 与固件兼容路径标为 MPU6500-compatible；电机规格、HalfQuad 计数和通道接线见 D.4、D.5。A/B/C/D 为固件逻辑通道，物理轮位以最终线束复核结果确定。
+
+麦克纳姆底盘为多方向运动提供机械基础。当前版本聚焦前进、后退和原地左右转，均已通过实机测试；自动人物跟随采用受限的前进和原地转向，硬件闭环也已通过 V1.3 测试。横向平移留待后续版本，速度、转角和停车距离的量化标定列入工程化计划。
 
 ### 5.9 头部舵机机构
 
-头部采用宏科 20 kg 扭力、5 V 舵机，受 ESP32-S3 PWM 控制。固件中心脉宽约 1570 μs，软件限制为 870～2270 μs；实机 `HEAD LEFT/RIGHT/CENTER` 已正常，机构机械总活动范围约 120°。软件脉宽界限不等于机构允许角度的精确标定值，极限位置逐点验收仍待完成。STOP 只停止底盘，舵机保持当前位置；舵机与四轮长时间并发尚缺最终验收记录。信号脚见表 D-5。
+头部由 ESP32-S3 控制一只 5 V 舵机，实现单自由度 yaw，可用于人物自动跟头和人工调整。相机与正面交互随头部转向人物，以较简洁的机构实现水平方向关注，并控制重量、成本与执行负载。
+
+舵机左右方向、回中、软件边界及与底盘并发已通过 V1.3 运动功能测试。GPIO、中心脉宽、可用范围和方向约定见 D.5。更换舵机或调整装配时，应重新确认方向与机械边界；寿命和承载能力留待整机可靠性验证。
 
 ### 5.10 电源、存储与外部接口
 
-当前电池为 3S 18650、3000 mAh 锂电池组，带过充、过放保护。电池经 LM2596 降压至 5 V，向 TB6612 电机电源及电机供电；ESP32-S3 和头部舵机同由 LM2596 5 V 供电。已确认的是各负载使用 LM2596 降压 5 V 路径，模块数量及各支路的精确线束拓扑未形成可核对图纸，不在此推断为同一块或多块降压板。各控制、执行模块共地，信号参考地必须连续。
+执行侧采用 3S 18650、标称 3000 mAh 且带过充、过放保护的锂电池组，经 LM2596 降压至 5 V，为电机驱动、ESP32-S3 和头部舵机供电。图 5-2 展示已核对的供电路径；降压模块数量和支路拓扑将在完整电源图中明确。
 
-龙芯主控当前另由独立 5 V 充电宝供电。原型尝试直接共用现有 LM2596 供电路径时，高 CPU 负载下稳定性不足，故改用独立电源；尚无电压跌落与瞬态波形测量，不能归因于某个 LM2596 模块的额定功率。eMMC 为板载存储；USB 承载摄像头、音频、Wi-Fi，RGB/I2C 承载显示触摸，UART 承载运动链路。外部接口实际占用与节点见附录 D。
+龙芯主控使用独立 5 V 充电宝。实物联调中，共用现有 LM2596 路径在高 CPU 负载下出现稳定性问题，因此当前采用分路供电以支撑功能验证。主控与执行侧保持共地，为 UART 提供共同信号参考；高负载电源瞬态将在后续电气测试中量化。
 
 ```mermaid
 flowchart LR
-    BAT["3S 18650 / 3000 mAh<br/>带过充过放保护"] --> REG["LM2596 降压 5 V 路径"]
-    REG --> TB["TB6612 ×2 / 四电机"]
-    REG --> ESP["ESP32-S3"]
-    REG --> SERVO["5 V 头部舵机"]
-    BANK["独立 5 V 充电宝"] --> SOC["龙芯 2K0300"]
-    SOC <-->|"TX/RX 交叉；115200 8N1"| ESP
-    SOC --- GND["共地 / UART 参考地"]
-    ESP --- GND
-    TB --- GND
-    SERVO --- GND
-    SOC <-->|"USB / RGB / I2C"| PER["屏幕触摸 / 相机 / 声卡 / Wi-Fi"]
+    BAT["3S 18650 电池组<br/>标称 3000 mAh / 过充过放保护"] --> REG["LM2596 降压 5 V 路径"]
+    REG --> DRV["TB6612 电机电源 / 四电机"]
+    REG --> MCU["ESP32-S3"]
+    REG --> HEAD["头部舵机"]
+    BANK["独立 5 V 充电宝"] --> SOC["龙芯 2K0300 主控"]
+    SOC <-->|"双向 UART 信号"| MCU
+    SOC --- GND["共同信号参考地"]
+    MCU --- GND
+    DRV --- GND
+    HEAD --- GND
 ```
 
-**图 5-2 当前原型电源与信号连接拓扑。** LM2596 方框表示已确认的 5 V 降压供电路径，不表示已核实模块数量；独立充电宝与执行侧共地是 UART 正常工作的连接边界。未来电源树应按负载域重设计。
+**图 5-2 当前原型供电路径与共地边界。** 图中展示供电与 UART 信号关系；外围设备支路、驱动逻辑电源和保护设计将在正式电源树中细化。
+
+存储按处理器和用途分工：主控板载 8 GB eMMC 承载系统、应用、模型和业务数据，2 MB SPI NOR 承载启动固件。当前部署将主程序放在 `/home/longpet/LongPet`，视觉模型放在 `/home/longpet/models/`，KWS 资源放在 `/home/longpet/longpet-kws/`，业务数据库位于 `/home/longpet/data/longpet.db`，配置位于 `/etc/longpet/`。这些目录共同使用主控文件系统，便于按功能维护和升级。
+
+板卡 TF 插槽可作为后续存储扩展接口，当前主存储仍为 eMMC。ESP32-S3 Flash 承载运动固件；训练数据和完整工程备份作为研发交付资料管理，板端部署使用所需模型与运行资源。USB、RGB/I2C 和 UART 连接见附录 D。
+
+图 5-3～图 5-5 展示原型整机、内部骨架和底盘装配，可直观看到交互模块、执行机构与线束布局。
+
+![图 5-3 LongPet 原型整机正面实拍](assets/hardware/longpet_front_annotated.jpeg)
+
+**图 5-3 LongPet 原型整机正面实拍。** 可见头部屏幕、前置摄像头、顶部麦克风与外壳；原图箭头为部件标注。
+
+![图 5-4 LongPet 原型内部结构实拍1](assets/hardware/longpet_internal_overview1.jpeg)
+![图 5-4 LongPet 原型内部结构实拍2](assets/hardware/longpet_internal_overview2.jpeg)
+
+**图 5-4 LongPet 原型内部结构实拍。** 展示头部机构、骨架和主要线束布局。
+
+![图 5-5 LongPet 四轮底盘实拍](assets/hardware/longpet_chassis_bottom.jpeg)
+
+**图 5-5 LongPet 四轮底盘实拍。** 展示四电机、麦克纳姆轮与编码器线束；逻辑通道到物理轮位的映射见后续线束图。
 
 ### 5.11 硬件连接关系与信号边界
 
-龙芯与 ESP32-S3 之间仅交换高层 ASCII 命令、状态和诊断，实际电机 PWM、方向、STBY、编码器和 IMU 信号均留在 MCU 一侧。UART 必须 TX/RX 交叉、共地，且核对双方 GPIO 电平兼容性及上电顺序；Linux 设备名 `/dev/ttyS2` 是当前目标系统枚举，不应仅凭 SoC“UART2”编号永久推定。USB 设备节点及 ALSA 名称同样受拔插与设备树/驱动枚举影响，部署配置需与最终板卡复核。
+硬件连接分为三层：USB、RGB 显示、音频与网络接入龙芯主控；双向 UART 连接两处理器；方向、PWM、STBY、编码器和 IMU I2C 集中在运动 MCU 一侧。电机功率由驱动板输出，主控仅传输受控运动意图。图 5-6 展示执行与反馈链路，供电路径见图 5-2，引脚见 D.2～D.5。
 
-系统没有完成正式线束图、电源瞬态验证、硬件急停及独立过流保护方案。固件的超时停车和 TB6612 STBY 控制是软件安全边界，不能代替上电默认禁能和硬件断电措施。接口细节与待验证项分别见附录 D 和第 5.13 节。
+```mermaid
+flowchart LR
+    SOC["龙芯 2K0300"] <-->|"UART 命令 / 状态"| MCU["ESP32-S3"]
+    MCU -->|"方向 / PWM / STBY"| AB["TB6612 板 1<br/>A / B 通道"]
+    MCU -->|"方向 / PWM / STBY"| CD["TB6612 板 2<br/>C / D 通道"]
+    AB -->|"电机输出"| MAB["电机 A / B"]
+    CD -->|"电机输出"| MCD["电机 C / D"]
+    EAB["电机 A / B 编码器"] -->|"双相计数信号"| MCU
+    ECD["电机 C / D 编码器"] -->|"双相计数信号"| MCU
+    MCU <-->|"I2C"| IMU["IMU"]
+    MCU -->|"舵机控制脉冲"| SERVO["头部 yaw 舵机"]
+```
 
-### 5.12 关键物料选型依据
+**图 5-6 Motion MCU 执行器与反馈连接图。** A/B/C/D 为固件逻辑通道；控制信号与负载供电分开，模块共地和 MCU 供电见图 5-2。
 
-| 物料/方案 | 当前选型依据与已证实作用 | 证据与边界 |
+UART 采用 TX/RX 交叉接线并共地；物理脚号、MCU GPIO 与 Linux 节点在附录 D 分层标注。负载 5 V 供电和通信信号电平分别设计，MCU 停滞、掉电及输出初始化前的默认安全状态列入 D.9 的硬件保护工作。
+
+### 5.12 关键物料选型
+
+| 物料或结构 | 选型理由 | 当前取舍与边界 |
 | --- | --- | --- |
-| 龙芯 2K0300 先锋派 | 提供 Linux、图形显示、USB 外设及板载 eMMC，承担本地应用 | 本轮板卡配置；LongPet `deploy/longpet.service`、板端联调报告 |
-| 7 英寸 RGB/Goodix 触摸 | 1024×600 本机大屏与直接触摸输入 | 本轮实物信息；LongPet `docs/LongPet-V0.2-Board-Integration-Report.md` |
-| OV2735 UVC 与 C-Media USB 音频 | 使用 Linux 标准视频/音频设备链路，满足视觉与双向语音 | 本轮实物及枚举信息；LongPet `deploy/longpet.service`、视觉/通话报告 |
-| ESP32-S3 + 两块 TB6612 | 将四路电机及头部控制从主控实时任务中分离 | MCU `main` 固件与 `docs/firmware-baseline.md`；本轮实物数量确认 |
-| 四轮编码器 + MPU6500-compatible | 提供轮速和航向反馈 | MCU `main` 固件及 `docs/bench-test-report.md`；物理精度未标定 |
-| 3S 电池 + LM2596 + 独立主控电源 | 满足当前原型执行侧与主控分路运行 | 本轮电源实物/使用事实；高负载电源稳定性待工程化 |
+| 龙芯 2K0300 先锋派开发板 | 满足 LoongArch 原生平台要求，Linux、Qt6、端侧 AI 及多媒体链路已有工程基础 | 以轻量模型和受控并发适配单核资源 |
+| 7 英寸 RGB 触控模块 | 与头部结构匹配，以大按钮和表情提供直接交互 | 1024×600 工作点兼顾界面与显示负载 |
+| USB UVC 摄像头 | V4L2 接入成熟，单路 MJPEG 服务视觉与视频通话 | 单相机共享，视角与单目感知按场景配置 |
+| C-Media USB 声卡及现有麦克风、音箱 | 已联调录放链路覆盖唤醒、语音和通话 | 整机声学与回声性能纳入后续测试 |
+| Realtek USB Wi-Fi | 使用现有 Linux 驱动与家庭无线连接 | 板载 RJ45 为有线接入提供扩展选择 |
+| ESP32-S3 + 两块 TB6612 | 四路电机控制与反馈集中在独立执行侧，支持快速撤销使能 | 后续增加物理急停与默认禁能保护 |
+| 麦克纳姆轮 + 编码器 + IMU | 提供多方向运动机械基础及轮速、航向反馈 | 当前动作集中在已验证的前后与原地转向 |
+| 单轴头部舵机 | 以较简洁的机构实现水平方向人物关注 | 当前提供 yaw；扩轴时重新评估负载和安全 |
+| 执行侧电池降压与独立主控电源 | 分路供电支持当前原型运行与功能验证 | 一体化电源管理和支路保护列入工程化计划 |
 
-**表 5-1 关键物料选型及证据边界。** “本轮实物信息”指当前会话已确认的原型器件与板端枚举，不外推未给出的规格、可靠性或量产能力。
+**表 5-3 关键物料与结构选型。** 选型围绕原生算力平台、共享外设与独立运动执行展开，兼顾原型可实现性和后续扩展。
 
-### 5.13 当前硬件限制与工程化缺口
+### 5.13 原型验证成果与工程化方向
 
-| 项目 | 当前事实 | 后续工程化或验收工作 |
+当前原型已支持本机多模态交互、视觉跟头和受控底盘动作。V1.3 运动测试共 58 项，56 项通过，左右平移 2 项按版本计划暂缓；通过项包括舵机边界与并发、UART 断线停车、V2.3 人物跟随硬件闭环及距离阈值现场验证。下一阶段将围绕量化性能、电源保护和整机可靠性开展工程化工作。
+
+| 项目 | 当前原型配置与验证 | 后续工程化工作 |
 | --- | --- | --- |
-| 主控供电 | 共用当前 LM2596 路径时高 CPU 负载下稳定性不足，现由独立 5 V 充电宝供电 | 重设主控/电机/舵机电源域，测量启动和满载瞬态，补输入滤波、储能与过流保护；不预断故障根因 |
-| 电池管理 | 已知电池包有过充、过放保护；充电方式及保护板细节未核对 | 补充充电管理、线束、保险与电量检测方案及安全验证 |
-| 底盘运动 | 前后与原地旋转正常，左右平移有问题 | 核查轮型安装、物理通道映射、编码器方向和轮速组合，完成实机标定 |
-| 运动安全 | MCU 实现 500 ms 链路/命令/目标时效与 STBY 停车；完整安全矩阵未逐项通过 | 补 STOP、断线、故障、上电禁能及硬件急停/限流测试 |
-| 跟随与并发 | MCU `main` 的 FOLLOW 自动底盘关闭；头部视觉闭环、舵机与底盘长时并发无最终验收 | 完成视觉目标与距离代理标定、并发和全链路实机验收后再开放 |
-| 文档/固件基线 | 本文第 11 章和附录 B 描述 `FOLLOW_MOVE`、四类租约及更完整的验收；当前 MCU `main`（`b733bfc`）无 `FOLLOW_MOVE`，其台架记录仍有待测项 | 发布前统一固件分支、协议与测试报告版本；本章及附录 D 不将未合入 `main` 的能力视为当前硬件基线 |
-| 传感器与机构 | DHT22 已安装但未纳入正式业务；舵机机械总行程约 120°，极限与编码器分辨率未完整标定 | 视需求接入环境数据，完成舵机、轮速和转角标定 |
-| 装配资料 | 当前只有接线摘要；无可核对的整机实拍、完整线束和安装尺寸图 | 补整机/内部布局实拍及线束、固定与散热图；不以商品页截图充作实拍 |
+| 算力与内存 | 单核约 1 GHz、512 MB 物理内存；已通过轻量模型与受控并发支撑多模态功能 | 按整机工况验证资源与散热裕量 |
+| 视觉与空间感知 | 单 RGB 相机配合头部 yaw 完成人物感知与跟头；当前运动限定于有人看护的低速场景 | 评估视野遮挡和近地盲区；扩展自主移动时补充距离、障碍与悬崖感知 |
+| 运动量化 | 前后与原地转向、人物跟随闭环已通过功能测试；横向平移按版本计划暂缓 | 完成轮位映射、速度、转角、停距和编码器计数标定，并覆盖不同地面与负载 |
+| 电源与电池管理 | 执行侧电池具过充、过放保护，主控采用已联调的独立供电路径 | 完成电源树、充电与 BMS 方案、保险和支路保护，量测瞬态、温升及续航 |
+| 硬件停车保护 | MCU 软件按时效撤销 STBY，断线停车已通过功能测试 | 增加独立物理急停、电源切断、外部 STBY 下拉及驱动保护，测量滑行停距 |
+| 环境与时间 | DHT22 用于停车诊断，RTC 已完成系统读写 | 按业务需求决定环境数据接入，复测 RTC 断电保持 |
+| 装配与可靠性 | 现成模块与骨架完成原型装配，整机、内部和底盘均有实拍记录 | 完善线束固定、散热与夹点防护，开展长稳、EMC 和环境适应性验证 |
 
-**表 5-2 当前硬件限制与工程化缺口。** 此表区分代码保护机制、实机通过项和待验收项，不能据现有台架记录宣称整机硬件安全验收完成。
+**表 5-4 原型能力与后续工程化工作。** 当前运动功能面向有人看护的低速原型验证；软件停车撤销驱动输出，实际停距需结合惯性和地面条件测量。整机安全与可靠性按后续测试和保护设计逐项完善。
 
 ## 6 LoongArch 系统软件平台设计
 
@@ -1748,11 +1821,11 @@ Family Desktop 发起远控会话，LongPet 校验会话身份、串口状态、
 
 ### 附录 B 系统接口索引
 
-本附录汇总当前接口的方向、关键字段、错误处理与实现依据（Source of Truth，SoT），便于开发联调、测试追踪和后续维护。路径为各工程内的相对路径；`LongPet:`、`Family:`、`MCU:` 分别指主程序、Family Desktop 和 Motion MCU 工程。接口行为以当前实现为准，协议文档随版本同步维护。`<BASE_URL>`、`<API_KEY>`、`<TOKEN>`、`<DEVICE_ID>` 均为示例占位符。
+本附录汇总接口方向、关键字段、错误处理和实现位置，便于开发联调与后续维护。路径为各工程内的相对路径；`LongPet:`、`Family:`、`MCU:` 分别指主程序、Family Desktop 和 Motion MCU 工程。`<BASE_URL>`、`<API_KEY>`、`<TOKEN>`、`<DEVICE_ID>` 均为示例占位符。
 
 #### B.1 接口总览
 
-| ID | 接口族 | 发送方 → 接收方 | 传输/机制 | 主要用途 | SoT |
+| ID | 接口族 | 发送方 → 接收方 | 传输/机制 | 主要用途 | 实现位置 |
 | --- | --- | --- | --- | --- | --- |
 | IF-BOARD-01 | 本地业务请求与状态 | Qt 页面 → AppController → Service | Qt 信号/方法与模型 | 提醒、关怀、设置、通话、语音 | LongPet: `src/app/AppController.cpp`、`src/services/` |
 | IF-DATA-01 | 业务持久化 | Service → Repository → SQLite | Qt SQL | 提醒、事件、设置 | LongPet: `src/data/DatabaseManager.cpp`、各 Repository |
@@ -1769,7 +1842,7 @@ Family Desktop 发起远控会话，LongPet 校验会话身份、串口状态、
 | IF-DEVICE-01 | 相机/音频/显示/串口 | Adapter ↔ OS 设备 | GStreamer、ALSA、Qt 平台、UART | 平台能力接入 | LongPet: `src/platform/`、`deploy/longpet.service` |
 | IF-CONFIG-01 | 配置与模型 | Application/Adapter → 配置/模型文件 | INI、环境变量、文件系统 | Provider、路径、能力开关 | LongPet: `src/app/Application.cpp`、`src/data/*ConfigRepository.cpp`、`deploy/配置说明.md` |
 
-表 B-1 系统接口矩阵。通话媒体以当前代码和 `VIDEO_CALL_MEDIA_PROTOCOL.md` 为准；`VIDEO_CALL_SIGNALING_REPORT.md` 记录信令阶段设计。矩阵列示当前已接入的接口。
+表 B-1 系统接口矩阵。矩阵列示当前已接入的接口及其实现位置。
 
 #### B.2 Motion UART 接口
 
@@ -1804,7 +1877,7 @@ FamilyLink REST 使用 UTF-8 JSON 和 `/api/v1` 路径前缀。设备默认回�
 
 非 2xx 响应采用 `{"error":{"code":"...","message":"...","details":{...}}}` 结构，`details` 可省略。当前设备与家属端处理 400、401、404、405、409、413、422、431、500、503 等状态；403、429 属于协议文档的建议状态，当前设备端未使用。409 可表示 revision 冲突、设备忙或自动跟随模式切换受限，客户端按 `error.code` 给出对应提示。
 
-| Interface | 方向/传输 | 请求或事件与核心字段 | 失败语义 / SoT |
+| Interface | 方向/传输 | 请求或事件与核心字段 | 失败语义 / 实现位置 |
 | --- | --- | --- | --- |
 | `GET /status` | 家属端 → 设备，HTTP | `apiVersion`、capabilities、device、system、care | 连接失败视为离线；LongPet: `FamilyLinkController.cpp`；Family: `FAMILY_LINK_API.md` |
 | `GET /settings`；`PATCH /settings` | 家属端 ↔ 设备，HTTP | `volume`、`brightness`、`petStyle`、`expectedRevision` | 修订冲突 409，能力不可用 503；同上 |
@@ -1820,9 +1893,9 @@ FamilyLink REST 使用 UTF-8 JSON 和 `/api/v1` 路径前缀。设备默认回�
 
 | 实时接口 | 建立方式与方向 | LPMF 流/Control 内容 | 断开或无效时 |
 | --- | --- | --- | --- |
-| `/vision-monitor/v1`，通常端口 8789 | HTTP 签发短时会话；Renderer → 设备首帧 `authenticate`；设备 → Renderer | `DeviceVideo(1)` JPEG；`Control(5)` 的 `stream_started`、`vision_target`、`error` | 不认证不开放相机；断开隐藏旧帧和框；SoT: LongPet `FamilyVisionStreamAdapter.cpp`、`FamilyVisionProtocol.cpp` |
-| `/media/v1`，通常端口 8788 | 通话快照给出 `mediaPort/mediaToken`；双方 WebSocket | `DeviceVideo(1)`、`FamilyVideo(2)` JPEG；`DeviceAudio(3)`、`FamilyAudio(4)` PCM；`Control(5)` 鉴权及媒体状态 | 旧 callId/Token、媒体失败或断开使通话结束；SoT: LongPet `VideoCallMediaAdapter.cpp`；Family `VIDEO_CALL_MEDIA_PROTOCOL.md` |
-| `/motion-control/v1`，通常端口 8790 | HTTP 签发短时会话；Renderer → 设备首帧 `authenticate`；双向状态 | `Control(5)` JSON：`chassis`、`head`、`stop`、`release`；设备返回 `control_started`、`motion_status`、`error` | 断开撤销控制；MOVE 不再刷新则停车；SoT: LongPet `FamilyMotionControlAdapter.cpp`；Family `FAMILY_LINK_API.md` 第 8 节 |
+| `/vision-monitor/v1`，通常端口 8789 | HTTP 签发短时会话；Renderer → 设备首帧 `authenticate`；设备 → Renderer | `DeviceVideo(1)` JPEG；`Control(5)` 的 `stream_started`、`vision_target`、`error` | 未鉴权不开放相机；断开隐藏旧帧和框；LongPet `FamilyVisionStreamAdapter.cpp`、`FamilyVisionProtocol.cpp` |
+| `/media/v1`，通常端口 8788 | 通话快照给出 `mediaPort/mediaToken`；双方 WebSocket | `DeviceVideo(1)`、`FamilyVideo(2)` JPEG；`DeviceAudio(3)`、`FamilyAudio(4)` PCM；`Control(5)` 鉴权及媒体状态 | 旧 callId/Token、媒体失败或断开使通话结束；LongPet `VideoCallMediaAdapter.cpp`；Family `VIDEO_CALL_MEDIA_PROTOCOL.md` |
+| `/motion-control/v1`，通常端口 8790 | HTTP 签发短时会话；Renderer → 设备首帧 `authenticate`；双向状态 | `Control(5)` JSON：`chassis`、`head`、`stop`、`release`；设备返回 `control_started`、`motion_status`、`error` | 断开撤销控制；MOVE 停止刷新后停车；LongPet `FamilyMotionControlAdapter.cpp`；Family `FAMILY_LINK_API.md` 第 8 节 |
 
 表 B-5 三种 WebSocket 通道。客户端根据已配置设备 URL 的主机和服务返回端口建立连接，令牌通过会话鉴权消息传递。三个通道复用 `MediaFrameProtocol`：每个 WebSocket Binary Message 包含一个 LPMF 帧，24 字节大端帧头依次为 `LPMF` magic(4)、version(1)、streamType(1)、flags(2)、sequence(4)、Unix 微秒时间戳(8)、payloadLength(4)，payload 最大 2 MiB；Control payload 为 UTF-8 JSON。通话媒体协议见 Family: `docs/VIDEO_CALL_MEDIA_PROTOCOL.md`。当前通话适配器以会话内 `callId` 和媒体 Token 鉴权，视觉与远控适配器同时校验请求路径；通话路径校验可在后续版本补齐。
 
@@ -1830,7 +1903,7 @@ FamilyLink REST 使用 UTF-8 JSON 和 `/api/v1` 路径前缀。设备默认回�
 
 #### B.4 AI Provider 与天气接口
 
-| 能力/实现 | 方法与路径类别 | 请求核心字段 | 响应核心字段 | 超时/错误与 SoT |
+| 能力/实现 | 方法与路径类别 | 请求核心字段 | 响应核心字段 | 错误处理 / 实现位置 |
 | --- | --- | --- | --- | --- |
 | OpenAI-compatible ASR | `POST <BASE_URL>/audio/transcriptions`，multipart | WAV `file`、`model`、可选 `language`、`response_format=json` | `text` | session ID 对应的成功/失败信号；LongPet: `OpenAiCompatibleProviders.cpp`、`ProviderHttpClient.cpp` |
 | 阿里云 ASR | `POST <BASE_URL>/services/aigc/multimodal-generation/generation` | `model`、含 WAV Data URI 的 `input.messages`、`parameters` | 转写文本 | 与兼容协议不同；LongPet: `AliyunProviders.cpp` |
@@ -1860,11 +1933,11 @@ FamilyLink REST 使用 UTF-8 JSON 和 `/api/v1` 路径前缀。设备默认回�
 | `detectorMs`、`trackerMs`、`diagnostic` | double ms / string | 耗时与诊断，不直接作为控制授权 | 遥测/调试 |
 | 网络 `bbox` | JSON object 或 null | `{x,y,w,h}`，均在 `[0,1]`；不可绘制时为 null | Family Desktop Canvas |
 
-表 B-7 目标观测及网络投影的关键字段。网络 `vision_target` 还包含 `protocol_version`、`frame_sequence`、`capture_timestamp`、`published_at`、`present`、`fresh`、`state`、`age_ms`、检测/跟踪置信度及遥测字段。目标缺失、过期或处于 SEARCHING/LOST 时，服务端发送 `bbox:null`，家属端结合接收时刻与 `age_ms` 隐藏旧框。AI 视野组合最新 JPEG 和最新有效观测，按时效匹配而非逐帧绑定。SoT：LongPet `src/model/VisionModels.h`、`src/model/VisionModels.cpp`、`src/platform/FamilyVisionProtocol.cpp`；Family `src/renderer/vision-monitor-adapter.js`。
+表 B-7 目标观测及网络投影的关键字段。网络 `vision_target` 还包含 `protocol_version`、`frame_sequence`、`capture_timestamp`、`published_at`、`present`、`fresh`、`state`、`age_ms`、检测/跟踪置信度及遥测字段。目标缺失、过期或处于 SEARCHING/LOST 时，服务端发送 `bbox:null`，家属端结合接收时刻与 `age_ms` 隐藏旧框。AI 视野组合最新 JPEG 和最新有效观测，按时效匹配而非逐帧绑定。实现位置：LongPet `src/model/VisionModels.h`、`src/model/VisionModels.cpp`、`src/platform/FamilyVisionProtocol.cpp`；Family `src/renderer/vision-monitor-adapter.js`。
 
 #### B.6 本地数据与配置索引
 
-| Item | 用途与实际范围 | 默认/解析规则 | 敏感性及 SoT |
+| Item | 用途与实际范围 | 默认/解析规则 | 敏感性 / 实现位置 |
 | --- | --- | --- | --- |
 | SQLite `schema_meta` | schema 版本；当前 v1 | 随数据库创建 | 非敏感；LongPet: `src/data/DatabaseManager.cpp` |
 | SQLite `reminders` | 提醒定义、启用、revision、创建/更新时间 | Repository 维护 | 含个人日程；LongPet: `ReminderRepository.cpp` |
@@ -1903,47 +1976,63 @@ FamilyLink REST 使用 UTF-8 JSON 和 `/api/v1` 路径前缀。设备默认回�
 
 ### 附录 D 硬件连接与引脚摘要
 
-本附录以当前原型为对象，供接线复核与部署排查。MCU GPIO 以 Motion MCU `main`（`b733bfc`）固件 `xiao_che/xiao_che.ino`、`docs/firmware-baseline.md` 为准；龙芯侧设备路径以 LongPet `main` 的 `deploy/longpet.service`、`deploy/配置说明.md` 和本轮实机枚举事实为准。GPIO 数字是 MCU 逻辑管脚定义，不替代开发板丝印核对、线束通断测试或电气图纸。
+本附录给出 LongPet 原型的外设连接、UART 接线、MCU GPIO、供电关系和系统设备节点，可直接用于装配检查与软件联调。表中区分物理针脚、逻辑 GPIO 和 Linux 设备节点；运动功能与第 5、11 章的设计和测试结果一致。
+
+以下 MCU GPIO 均为 ESP32-S3 逻辑管脚号，Linux 节点对应当前系统配置。更换镜像或外设后重新确认节点；电气参数与机构边界按最终装配测量。
 
 #### D.1 龙芯主控外设连接摘要
 
-| 外设 | 物理/总线连接 | 当前用途及边界 |
-| --- | --- | --- |
-| 7 英寸显示 | 24 位 RGB 面板接口 | 1024×600；Linux framebuffer `/dev/fb0` |
-| Goodix 电容触摸 | I2C 触摸接口 | 当前 Qt 输入 `/dev/input/event0`；最终节点以枚举为准 |
-| OV2735 摄像头 | USB UVC | 视觉与视频通话共享采集，当前 `/dev/video0` |
-| C-Media USB Audio Device | USB 音频，3.5 mm 麦克风/音箱 | 同一声卡提供录放 PCM；无外置功放 |
-| Realtek Wi-Fi | 开发板 USB Wi-Fi | `0bda:f179`，当前 `wlan0` |
-| ESP32-S3 | 龙芯 UART2，TX/RX/GND | 双向运动控制与状态日志，见 D.2 |
-| 板载 eMMC / RJ45 | 板载存储/有线接口 | 8 GB eMMC；RJ45 不是当前主要联网方式 |
+| 模块 | 连接到 | 接口 | 用途 | 当前状态 |
+| --- | --- | --- | --- | --- |
+| 7 英寸显示 / Goodix 触摸 | 龙芯主控 | 40PIN LCD FPC：RGB / I2C | 本机显示与触摸 | 当前使用，节点及排线见 D.6 |
+| OV2735 方案摄像头 | 龙芯主控 | USB UVC | 视觉、通话、跟头与跟随输入 | 当前使用，见 D.7 |
+| C-Media USB 声卡 | 龙芯主控 | USB Audio | 录音与播放 | 当前使用，见 D.7 |
+| 桌面麦克风 / 有线音箱 | USB 声卡 | 3.5 mm 录音输入 / 播放输出 | 语音交互、提醒、通话 | 当前使用，采用声卡直连方案 |
+| Realtek Wi-Fi | 龙芯主控 | USB 无线网卡 | 家庭和在线服务连接 | 当前主要联网接口，见 D.7 |
+| ESP32-S3 | 龙芯主控 | UART2 ↔ Serial1 | 命令与状态 | 当前使用，见 D.2 |
+| 两块 TB6612 / 四电机 | ESP32-S3 / 驱动板 | 方向、PWM、STBY / 电机输出 | 四轮执行 | 当前使用，见 D.3、D.4 |
+| 四路编码器 / IMU | ESP32-S3 | 双相信号 / I2C | 轮速与航向反馈 | 当前使用，见 D.4、D.5 |
+| 头部舵机 | ESP32-S3 | 舵机控制脉冲 | yaw 关注与人工控制 | 当前使用，参数见 D.5 |
+| 板载 eMMC / SPI NOR | 龙芯主控 | 板载存储接口 | 系统、应用、数据 / 启动固件 | 存储分工见 5.10 |
+| RTC | 龙芯主控 | SoC RTC 与板卡后备电池接口 | 系统时间 | 已完成读写验证；断电保持待复测 |
+| DHT22 | ESP32-S3 | 单总线数据 | 固件停车诊断 | 已安装，用于固件诊断采样 |
 
-**表 D-1 龙芯主控外设连接摘要。** USB 端口物理位置与 I2C 排线针脚未提供完整线束证据，装配前应以实物和最终板卡图纸复核。
+**表 D-1 硬件模块连接总览。** 表中列出当前已接入模块；RJ45、TF 等板卡接口可供后续扩展。USB 端口位置与线束按最终装配核对。
 
 #### D.2 龙芯—ESP32-S3 UART 接线
 
 | 龙芯 2K0300 端 | 方向 | ESP32-S3 端 | 参数/说明 |
 | --- | :---: | --- | --- |
-| GPIO44，复用 UART2_TX | → | GPIO6，`Serial1` RX | 主控命令进入 MCU |
-| GPIO45，复用 UART2_RX | ← | GPIO7，`Serial1` TX | MCU 状态、启动与故障日志返回 |
-| GND | ↔ | GND | 共地，作为 UART 信号参考 |
+| 40PIN GPIO 排针物理 8 脚：GPIO44 / UART2_TX | → | GPIO6，`Serial1` RX | 主控命令进入 MCU |
+| 40PIN GPIO 排针物理 10 脚：GPIO45 / UART2_RX | ← | GPIO7，`Serial1` TX | MCU 状态、启动与故障日志返回 |
+| 板卡 GND（实际所接地脚未记录） | ↔ | GND | 共地，作为 UART 信号参考 |
 
-**表 D-2 龙芯—运动 MCU UART 交叉接线。** 波特率 115200，8 数据位、无校验、1 停止位，无软硬件流控。目标 Linux 系统当前存在 `/dev/ttyS2`，应用 `LONGPET_MOTION_DEVICE` 也指向该节点；UART2 与节点对应关系以最终设备树枚举为准。现场接线前还须核对接口电平、排针定义与上电顺序。SoT：MCU `docs/firmware-baseline.md`；LongPet `deploy/longpet.service`、`docs/LongPet-Family-Remote-Control-V1-Report.md`；本轮龙芯 GPIO 复用确认。
+**表 D-2 龙芯—运动 MCU UART 交叉接线。** 龙芯物理 8/10 脚分别复用 UART2_TX / UART2_RX，两侧 TX 连接对方 RX；MCU `Serial1.begin(kLinkBaud, SERIAL_8N1, LINK_RX, LINK_TX)` 对应 RX GPIO6、TX GPIO7。
+
+当前应用配置 `LONGPET_MOTION_DEVICE=/dev/ttyS2`；`EspSerialAdapter` 和固件均使用 **115200、8N1、无软硬件流控**。UART2 为外设复用名，`/dev/ttyS2` 为当前镜像的设备节点。40PIN GPIO 排针与 40PIN LCD FPC 分属不同接口；实际 GND 接线、电平容限、上电次序和线束通断在装配电气检查中确认。
 
 #### D.3 ESP32-S3 GPIO 分配表
 
-| 功能组 | ESP32-S3 GPIO | 对应外设/备注 |
-| --- | --- | --- |
-| `Serial1` RX / TX | 6 / 7 | 龙芯 UART2，115200 8N1 |
-| TB6612 A/B 方向 | 41、42 / 39、38 | AIN1/AIN2、BIN1/BIN2 |
-| TB6612 C/D 方向 | 48、45 / 21、20 | CIN1/CIN2、DIN1/DIN2 |
-| A/B/C/D PWM | 4 / 5 / 9 / 10 | 固件 LEDC 通道 4 / 5 / 6 / 7，25 kHz、10 bit |
-| 两块驱动板 STBY | 40 / 47 | A/B 与 C/D 分别使能 |
-| A/B/C/D 编码器双相信号 | 11/12；13/14；15/16；17/18 | 固件 HalfQuad 计数 |
-| IMU I2C SDA / SCL | 35 / 36 | 地址 `0x68` |
-| 头部舵机信号 | 2 | 5 V 舵机，PWM 信号 |
-| DHT22 数据 | 8 | 已安装，正式业务未启用 |
+| 功能 | ESP32-S3 GPIO | 方向（相对 MCU） | 连接模块 | 说明 |
+| --- | --- | --- | --- | --- |
+| Serial1 RX / TX | 6 / 7 | 输入 / 输出 | 龙芯 UART2 TX / RX | 115200 8N1，交叉连接 |
+| AIN1 / AIN2 | 41 / 42 | 输出 | TB6612 板 1 A 路 | 电机 A 方向 |
+| BIN1 / BIN2 | 39 / 38 | 输出 | TB6612 板 1 B 路 | 电机 B 方向 |
+| CIN1 / CIN2 | 48 / 45 | 输出 | TB6612 板 2 第一通道 | 固件逻辑电机 C |
+| DIN1 / DIN2 | 21 / 20 | 输出 | TB6612 板 2 第二通道 | 固件逻辑电机 D |
+| PWMA / PWMB / PWMC / PWMD | 4 / 5 / 9 / 10 | 输出 | 四路驱动 PWM 输入 | LEDC 通道 4 / 5 / 6 / 7；25 kHz、10 bit |
+| STBY_AB / STBY_CD | 40 / 47 | 输出 | 两块 TB6612 STBY | 高电平使能，低电平撤销驱动 |
+| 编码器 A 双相信号 | 11 / 12 | 输入 | 电机 A 编码器 | HalfQuad |
+| 编码器 B 双相信号 | 13 / 14 | 输入 | 电机 B 编码器 | HalfQuad |
+| 编码器 C 双相信号 | 15 / 16 | 输入 | 电机 C 编码器 | HalfQuad |
+| 编码器 D 双相信号 | 17 / 18 | 输入 | 电机 D 编码器 | HalfQuad |
+| IMU SDA / SCL | 35 / 36 | 双向 / 时钟输出 | IMU I2C | 地址 `0x68` |
+| 头部舵机信号 | 2 | 输出 | 头部 yaw 舵机 | 控制脉冲范围见 D.5 |
+| DHT22 数据 | 8 | 双向 | 已安装 DHT22 | 停车诊断采样，正式业务未启用 |
 
-**表 D-3 当前 `main` 固件 GPIO 总览。** 逻辑通道 A/B/C/D 与物理轮位的对应关系仍须线束核对。SoT：MCU `xiao_che/xiao_che.ino`、`docs/firmware-baseline.md`。
+**表 D-3 当前固件 GPIO 分配。** LEDC 通道号和 GPIO 号分别标注；C/D 为第二块双路驱动板的固件逻辑命名。
+
+运动控制板模组丝印为 `ESP32S3WROOMR8N2`，固件编译目标为 `ESP32S3 Dev Module`；完整板卡配置以最终物料清单为准。
 
 #### D.4 电机、编码器与 TB6612 接线表
 
@@ -1954,44 +2043,97 @@ FamilyLink REST 使用 UTF-8 JSON 和 `/api/v1` 路径前缀。设备默认回�
 | TB6612 板 2 / C | 48 / 45 | 9 / 6 | 15 / 16 | 47 | TT 电机 C，5 V 原型供电 |
 | TB6612 板 2 / D | 21 / 20 | 10 / 7 | 17 / 18 | 47 | TT 电机 D，5 V 原型供电 |
 
-**表 D-4 两块 TB6612 与四个电机的固件通道映射。** 每台电机标称 3～9 V、当前使用 5 V、1:48 减速和“13 线”编码器，四轮直径 60 mm。表中未给出缺乏证据的物理轮位、编码器 CPR 和电机端子极性；A/B/C/D 与四个车轮的线束映射应通过单轮点动及反馈符号复核。SoT：MCU `main` 的 `xiao_che/xiao_che.ino`、`docs/firmware-baseline.md`；本轮实物确认。
+**表 D-4 两块 TB6612 与四个电机的固件通道映射。** TT 减速电机标称 3～9 V，原型使用 5 V，减速比 1:48，商品编码器规格为“13 线”，轮径 60 mm。A/B/C/D 为固件通道；物理轮位、编码器输出轴计数和端子极性通过单轮点动及反馈符号复核后纳入线束图。
 
 #### D.5 IMU、舵机与 DHT22 接线表
 
 | 器件 | MCU 接口 | 当前状态与参数 |
 | --- | --- | --- |
 | MPU6500-compatible IMU | I2C SDA GPIO35、SCL GPIO36，地址 `0x68` | 实机 `WHO_AM_I=0x70`，Gyro Z 与 bias 校准正常；供电引脚/电压以模块实物核对 |
-| 宏科 20 kg 头部舵机 | 信号 GPIO2；5 V 与 GND | 中心约 1570 μs，软件 870～2270 μs；实机机械总行程约 120° |
+| 宏科头部舵机（原记录商品规格“20 kg”） | 信号 GPIO2；5 V 与 GND | 中心约 1570 μs，软件 870～2270 μs；实机机械总行程约 120° |
 | DHT22 | 数据 GPIO8；电源与 GND | 实物已安装；固件仅在停车状态周期采样/输出诊断，当前不进入正式业务链 |
 
-**表 D-5 IMU、头部舵机与预留环境传感器接线。** DHT22 的固件诊断采样不等同于产品已交付温湿度功能。SoT：MCU `xiao_che/xiao_che.ino`、`docs/firmware-baseline.md`；本轮实物与台架确认。
+**表 D-5 IMU、头部舵机与诊断环境传感器接线。** IMU 在实机上返回 `WHO_AM_I=0x70`；DHT22 用于停车状态诊断采样。舵机“20 kg”为商品规格名称，实际机构承载以整机测试为准。
+
+头部舵机按以下脉宽与方向约定控制：
+
+| 参数或动作 | 当前值 / 方向约定 |
+| --- | --- |
+| 信号 GPIO / 自由度 | GPIO2 / 水平 yaw |
+| 中心脉宽 | 1570 μs |
+| 产品软件可用范围 | 870～2270 μs |
+| Servo attach 范围 | 500～2500 μs，为库初始化范围；产品运动使用 870～2270 μs 软件边界 |
+| HEAD LEFT | 物理向左，脉宽增大，`head_offset` 为负 |
+| HEAD RIGHT | 物理向右，脉宽减小，`head_offset` 为正 |
+| HEAD CENTER | 脉宽回到 1570 μs，`head_offset` 为 0 |
+| 偏移计算 | `head_offset = 1570 - pulse_us`，单位 μs，用于表达脉宽偏移 |
+| TARGET 水平方向 | 图像 `dx < 0` 驱动头部向左，`dx > 0` 向右；与人工 HEAD 共用映射 |
+| 机械范围与验证 | 已有约 120°总行程记录；软件边界、方向、回中及与底盘并发在 V1.3 报告中通过 |
+| STOP 边界 | 撤销底盘输出，舵机保持当前位置并继续供电 |
+
+**表 D-5a 头部舵机参数与符号约定。** 表中偏移采用脉宽单位；机械角度、极限及左右方向在重新装配后复测。
 
 #### D.6 显示与触摸接口摘要
 
-7 英寸 IPS 屏为 1024×600、24 位 RGB 面板；触摸为 I2C 电容触摸，实机识别 Goodix。当前 Qt `linuxfb` 使用 `/dev/fb0`、`evdevtouch` 使用 `/dev/input/event0`，部署配置见 LongPet `deploy/longpet.service`。板端报告记录 framebuffer 为 1024×600×32（BGRA/BGRX），此处 32 位仅指内存像素格式。面板排线和 Goodix 的具体板级针脚未获得可核对图纸，不能由 Linux 节点反推。
+7 英寸 IPS 屏采用 1024×600、24 位 RGB 面板，触摸经 I2C 接入，实机识别为 Goodix。当前 Qt `linuxfb` 使用 `/dev/fb0`，`evdevtouch` 使用 `/dev/input/event0`。板端 framebuffer 为 1024×600×32（BGRA/BGRX），其中 32 位表示 Linux 内存像素格式；面板物理接口仍为 24 位 RGB。表 D-6 按功能段归并 40PIN LCD FPC 定义。
+
+| FPC 脚位 | 官方信号名 | 用途 |
+| --- | --- | --- |
+| 1、2 | VCC | 5 V 输入 |
+| 3～10 | R0～R7 | 8 位红色数据线 |
+| 11、20、29 | GND | 地线 |
+| 12～19 | G0～G7 | 8 位绿色数据线 |
+| 21～28 | B0～B7 | 8 位蓝色数据线 |
+| 30 | CLK | 像素时钟 |
+| 31、32 | HSYNC、VSYNC | 水平、垂直同步 |
+| 33、34 | LCD_EN、LCD_BL | 数据使能、背光控制 |
+| 35、36 | CT_RST、CT_SDA | 电容触摸复位、I2C SDA |
+| 37 | NC | 未连接 |
+| 38、39 | CT_SCL、CT_INT | 电容触摸 I2C SCL、中断 |
+| 40 | RESET | LCD 复位，低电平有效 |
+
+**表 D-6 龙芯 2K0300 先锋派 40PIN LCD FPC 接口摘要。** 屏线与触摸方向按原型装配检查。
 
 #### D.7 USB 外设与系统设备节点
 
-| 外设 | 当前识别/节点 | 应用配置及注意事项 |
+| 外设 | 原型识别/节点 | 应用配置及注意事项 |
 | --- | --- | --- |
-| 摄像头 | OV2735 UVC，`/dev/video0` | `LONGPET_CAMERA_DEVICE=/dev/video0`；当前 640×480 MJPEG@30，物理倒装配置旋转 180° |
-| USB 音频 | C-Media `0d8c:0014`，ALSA `CARD=Device` | 录放 `plughw:CARD=Device,DEV=0`；mixer `hw:CARD=Device`；名称需按实机复核 |
-| USB Wi-Fi | Realtek `0bda:f179`，`wlan0` | 主要联网接口；可能需启动恢复服务 |
+| 摄像头 | OV2735 方案、200 万像素 UVC；`1bcf:2281`，`XHH-260128-A 2M`，`uvcvideo`；`/dev/video0` | `LONGPET_CAMERA_DEVICE=/dev/video0`；当前 GStreamer/V4L2 请求 640×480 MJPEG@30，物理倒装配置旋转 180°；1920×1080 MJPEG@30 为已有枚举记录的支持模式 |
+| USB 音频 | C-Media Electronics Inc. USB Audio Device，`0d8c:0014`，ALSA `CARD=Device` | 录放 `plughw:CARD=Device,DEV=0`；mixer `hw:CARD=Device`；当前适配器依次尝试 `PCM`、`Speaker`，已有报告确认 `Speaker` 可用 |
+| USB Wi-Fi | Realtek 802.11n，`0bda:f179`，`wlan0` | 当前主要联网接口；软件识别 RTL8188FU，驱动 `rtl8xxxu`；已有启动恢复验证 |
+| USB HUB | `1a86:8091` | 外设扩展链路；具体端口拓扑以最终枚举为准 |
 | 显示 | `/dev/fb0` | Qt `linuxfb`，1024×600 |
 | 触摸 | Goodix，`/dev/input/event0` | Qt `evdevtouch`；节点以最终枚举为准 |
 | Motion UART | `/dev/ttyS2` | `LONGPET_MOTION_DEVICE` 当前值；设备树枚举后复核 |
 
-**表 D-6 当前 USB 外设与 Linux 设备节点。** USB VID:PID 来自本轮实机枚举，应用路径来自 LongPet `deploy/longpet.service`；拔插、系统镜像与设备树变化后须重新核对。相机支持的 1920×1080 MJPEG@30 为设备能力，不是当前应用工作点。
+**表 D-7 原型 USB 外设与 Linux 设备节点。** 音频使用 `CARD=Device` 逻辑标识，减少数字 card 序号变化对部署的影响。
+
+摄像头采用 2.8 mm 镜头，标称视场角约 100°；整机视野以最终装配标定为准。`CameraCaptureAdapter` 请求 MJPEG，640×480 采集已验证。设备枚举支持 1080p MJPEG，当前业务采集工作点为 640×480；30 FPS 为采集请求值，推理速度见第 9 章。
+
+Wi-Fi 模块的物料标识为 RTL8188FTV，当前驱动识别为 RTL8188FU；两项分别用于物料识别与软件维护。板卡另提供 ES8388 音频路径，当前应用使用 C-Media USB 声卡；`AudioVolumeAdapter` 依次支持 `PCM` 与 `Speaker` 音量控件。
 
 #### D.8 电源与共地关系
 
 | 电源域 | 当前连接 | 已知边界 |
 | --- | --- | --- |
-| 执行侧 | 3S 18650、3000 mAh（过充/过放保护）→ LM2596 5 V 路径 → 两块 TB6612/四电机、ESP32-S3、头部舵机 | 降压模块数量、各支路保险/滤波与充电方式未形成可核对资料 |
-| 龙芯主控 | 独立 5 V 充电宝 → 龙芯 2K0300 | 当前共用 LM2596 路径高 CPU 负载稳定性不足；原因待电压/电流实测 |
-| 信号参考 | 龙芯 GND ↔ ESP32-S3 GND ↔ 驱动板/舵机 GND | UART 必须共地；正式线束需校核接地、接插件及上电次序 |
+| 执行侧 | 3S 18650、3000 mAh（过充/过放保护）→ LM2596 5 V 路径 → 两块 TB6612/四电机、ESP32-S3、头部舵机 | 支路保护、滤波和充电方式纳入正式电源树 |
+| 龙芯主控 | 独立 5 V 充电宝 → 龙芯 2K0300 | 采用独立路径适应当前主控负载；后续测量电压、电流瞬态 |
+| 信号参考 | 龙芯 GND ↔ ESP32-S3 GND ↔ 驱动板/舵机 GND | 共地为 UART 提供信号参考；最终线束校核接地、接插件与上电次序 |
 
-**表 D-7 当前供电与共地关系。** 此表描述原型已确认的供电路径，不充当额定电流、续航或安全认证结论；工程化工作见表 5-2。
+**表 D-8 当前供电与共地关系。** 原型采用主控与执行侧分路供电、通信共地的结构；额定电流、续航和支路保护在后续电源测试中量化，见表 5-4。
+
+#### D.9 硬件安全边界
+
+| 保护或接口 | 当前事实 | 边界 |
+| --- | --- | --- |
+| MCU fail-safe | 本地检测通信失效、命令过期和受控故障后撤销底盘输出；已通过 V1.3 功能验收 | 生效条件为 MCU 供电与程序正常运行；独立硬件保护列入后续工作 |
+| TB6612 STBY | `BeginSafe()` 首先将 GPIO40/47 置低；`Run::Stop()` 置低 STBY 并清输出 | 低电平使驱动输出进入高阻自由滑行；实际停距需测量 |
+| 上电、复位与 MCU 失效 | 软件初始化禁能已通过相应功能测试 | 进一步验证软件启动前的电平、外部 STBY 下拉与异常掉电行为 |
+| 物理急停与驱动保护 | 原型以 MCU 软件停车和电池包过充、过放保护为基础 | 工程化阶段增加独立急停、电源切断与支路过流保护 |
+| 供电与信号 | 主控独立供电，UART 共地；执行侧使用 5 V 降压路径 | 在完整电气图中确认 TB6612 VM/逻辑 VCC、编码器与 IMU 电平、信号容限和接地路径 |
+| 头部机构 | 脉宽范围、方向和并发功能已验收 | STOP 时舵机仍供电；夹点、机械限位、寿命与承载纳入整机验证 |
+
+**表 D-9 软硬件停车与电气保护边界。** 当前 MCU 软件停车机制及验收编号见第 11 章；后续独立硬件保护和整机电气验证与表 5-4 对应。
 
 ### 附录 E 第三方软件、库与模型清单
 
