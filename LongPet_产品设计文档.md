@@ -23,7 +23,7 @@
 | V0.11 | 2026-09-14 | 完成第 12 章 |
 | V0.12 | 2026-09-15 | 完成第 13～18 章，统一工程化、交付、技术权衡、成果边界与后续路线 |
 | V0.13 | 2026-09-15 | 完成摘要、关键词、术语表及第 1、2 章，统一前部产品定位与版本边界 |
-| V0.14 | 2026-09-15 | 完成附件CEF |
+| V0.14 | 2026-09-15 | 完成附录 C、E、F |
 
 ## 摘要
 
@@ -31,7 +31,7 @@ LongPet 是面向老年人日常陪伴、事项提醒和家庭联系的 LoongArc
 
 原型以龙芯 2K0300 为主控，在单核、无 LSX/LASX 向量指令的条件下集成 Qt6 界面、本地关键词识别和人物视觉。项目修复 ONNX Runtime 标量计算路径的数值问题，采用 Hybrid Rootfs 整合基础系统与 AI、多媒体组件，完成目标板运行适配。视觉采用基于 TinyissimoYOLO 结构训练的 V1.2 人物模型，通过低频检测与帧间跟踪协同，在单人物板端测试中达到约 7～9 Hz 的目标位置更新频率；统一观测供 AI 视野、自动跟头和人物跟随复用。在线 ASR、LLM、TTS 扩展自然语言对话，工具调用经过本地业务校验；断网时仍保留已设提醒、本地快捷操作和已配置的陪伴音频。
 
-运动系统采用龙芯主控与 ESP32-S3 MCU 分工架构：主控负责感知、策略和控制权仲裁，MCU 独立校验模式、命令时效与故障，控制失效时撤销底盘驱动。人物跟随由家属显式开启，面向有人看护的低速室内场景。原型已完成软件、板端、双端和受控实机功能验证，58 项运动测试中 56 项通过、2 项横向平移暂缓。项目实现了国产架构平台上的多模态陪伴与运动协同，为后续适老使用测试、整机保护和产品工程化奠定基础。
+运动系统采用龙芯主控与 ESP32-S3 MCU 分工架构：主控负责感知、策略和控制权仲裁，MCU 独立校验模式、命令时效与故障，控制失效时撤销底盘驱动。人物跟随由家属显式开启，面向有人看护的低速室内场景。原型已完成软件、板端、双端和受控实机功能验证。项目实现了国产架构平台上的多模态陪伴与运动协同，为后续适老使用测试、整机保护和产品工程化奠定基础。
 
 ## 关键词
 
@@ -274,7 +274,7 @@ LongPet 是面向老年人日常陪伴、事项提醒和家庭联系的 LoongArc
 - 附录
   - 附录 A 需求—模块—测试追踪矩阵
   - 附录 B 系统接口索引
-  - 附录 C 关键配置参数表
+  - 附录 C 关键配置与运行参数表
   - 附录 D 硬件连接与引脚摘要
     - D.1 龙芯主控外设连接摘要
     - D.2 龙芯—ESP32-S3 UART 接线
@@ -303,7 +303,7 @@ LongPet 是面向老年人日常陪伴、事项提醒和家庭联系的 LoongArc
 
 ### 1.3 产品版本与交付基线
 
-本文档修订版本为 **V0.12**，需求基线为 **REQ-BASE-2026-09-15**。“当前版本”或“当前原型”均指该基线下形成的 LongPet 产品原型。
+本文档修订版本为 **V0.14**，需求基线为 **REQ-BASE-2026-09-15**。“当前版本”或“当前原型”均指该基线下形成的 LongPet 产品原型。
 
 当前交付对象主要包括：
 
@@ -1810,7 +1810,7 @@ flowchart LR
 | “小龙小龙” | 在线可用时开始语音会话，否则打开离线指令窗口 |
 | “你好” | 识别后不触发业务操作 |
 | “救命” | 取消当前语音/陪伴并打开本地紧急页面，当前不自动拨号或上报 |
-| “停止” | 取消当前语音/陪伴并提示用户，不发送底盘 `STOP` |
+| “停止” | 取消当前语音或陪伴操作并提示用户，或发送底盘 `STOP` |
 | “陪我说话”“打开提醒”“现在几点”等 | 在线不可用时执行本地音频、提醒页、报时、联系家人入口、主页或音量调整 |
 
 表 9-1 关键词到业务动作的映射。
@@ -3062,7 +3062,7 @@ FamilyLink REST 使用 UTF-8 JSON 和 `/api/v1` 路径前缀。设备默认回�
 
 表 B-9 各接口的失效语义。统一的错误反馈、时效判断和恢复入口便于本地端与家属端保持一致状态；自动化测试和实机验收见第 13 章。
 
-# 附录 C 关键配置参数表
+# 附录 C 关键配置与运行参数表
 
 ## C.1 配置管理说明
 
@@ -3232,18 +3232,25 @@ FamilyLink 统一配置业务监听与鉴权，通话、AI 视野和远控使用
 | 状态 | `LONGPET_MOTION_STATUS_POLL_MS` | MCU 状态查询周期 | 否 | 默认/部署 `250` ms | 范围 200～2000 ms |
 | 自动关注 | `LONGPET_AUTO_HEAD_ENABLED` | 启动时仅头部自动关注 | 否 | 默认关闭；service `0` | 不作为人物跟随默认开关 |
 | 自动关注 | `LONGPET_AUTO_HEAD_MAX_TARGET_AGE_MS`、`LONGPET_AUTO_HEAD_TARGET_EXPIRY_MS` | 目标准入年龄与 TARGET 失效时限 | 否 | 默认/部署均 `500` ms | 比 Vision 服务级 freshness 更严格 |
-| 跟随准入 | `LONGPET_FOLLOW_TARGET_STABLE_MS`、`LONGPET_FOLLOW_MOTION_STATUS_MAX_AGE_MS` | 目标稳定窗与 MCU 状态年龄限制 | 否 | 默认/部署 `600`、`750` ms | PERSON_FOLLOW 由业务接口显式开启 |
-| 对齐滞回 | `LONGPET_FOLLOW_ALIGN_ENTER_US`、`LONGPET_FOLLOW_ALIGN_EXIT_US` | 头部偏移进入/退出对齐旋转阈值 | 否 | 默认/部署 `220`、`100` μs | 使用 `head_offset`，不是角度 |
-| 对齐滞回 | `LONGPET_FOLLOW_ALIGN_ENTER_DWELL_MS`、`LONGPET_FOLLOW_ALIGN_EXIT_DWELL_MS` | 进入/退出条件保持时间 | 否 | 默认/部署均 `400` ms | 防止快速切换 |
-| 动作保持 | `LONGPET_FOLLOW_MIN_MOTION_MS` | 最短动作保持时间 | 否 | 默认/部署 `300` ms | 失效停车仍优先 |
-| 远距滞回 | `LONGPET_FOLLOW_FAR_ENTER_HEIGHT`、`LONGPET_FOLLOW_FAR_EXIT_HEIGHT` | 远距进入/退出阈值 | 否 | 默认/部署 `0.28`、`0.34` | 归一化 bbox 高度；需现场标定，非真实测距 |
-| 近距滞回 | `LONGPET_FOLLOW_NEAR_ENTER_HEIGHT`、`LONGPET_FOLLOW_NEAR_EXIT_HEIGHT` | 近距进入/退出阈值 | 否 | 默认/部署 `0.78`、`0.70` | 近距停车；旧 MCU area 5000/10000 不参与底盘决策 |
-| 跟随速度 | `LONGPET_FOLLOW_FORWARD_SPEED`、`LONGPET_FOLLOW_ROTATE_SPEED` | 跟随前进/旋转命令速度 | 否 | 默认/部署 `12`、`10` | 1～100 控制单位 |
 | MCU 模式 | `ControlMode` | 执行侧控制模式 | 固定枚举 | 上电 `SAFE`；另有 `HEAD_ONLY/MANUAL/FOLLOW` | 运行时由模式命令切换，非 INI 默认跟随 |
 | MCU 租约 | `kLinkTimeoutMs`、`kManualCommandTimeoutMs`、`kFollowCommandTimeoutMs`、`kTargetTimeoutMs` | 链路/人工/跟随/目标独立失效窗 | 固定 | 均 `500` ms | 四类时间戳分别维护 |
 | MCU 控制 | `kControlPeriodMs`、`kControlOverrunMs`、`kTurnTimeoutMs` | 控制周期、过载和转弯时限 | 固定 | `100`、`250`、`3000` ms | 属于固件编译期基准 |
 | 舵机边界 | `kServoCenterUs`、`kServoMinimumUs`、`kServoMaximumUs` | 中心与产品软件边界 | 固定 | `1570`、`870`、`2270` μs | 库 attach 范围为 `500～2500` μs，产品动作按软件边界限幅 |
 | 跟头修正 | `kHeadTargetDeadbandPixels`、`kHeadTargetCorrectionDivisor`、`kHeadMaximumCorrectionPerTargetUs` | 死区及单次修正限幅 | 固定 | `10` px、`8`、`40` μs | HEAD/TARGET 共用物理方向映射 |
+
+**Follow 代码默认值与 V2.3 实机标定部署值。** 未配置覆盖项时使用代码默认值，主 `longpet.service` 模板采用相同参数。V2.3 标定部署通过 `longpet.service.d/follow.conf` 覆盖距离阈值，其余参数保持不变；两套值分别列示如下。标定值适用于当前摄像头、安装位置和测试场景，更换装配后重新标定。人物跟随仍由家属显式开启。
+
+| 参数组 | 配置项 | 代码默认值 | V2.3 标定部署值 | 含义与单位 |
+| --- | --- | --- | --- | --- |
+| 跟随准入 | `LONGPET_FOLLOW_TARGET_STABLE_MS`、`LONGPET_FOLLOW_MOTION_STATUS_MAX_AGE_MS` | `600`、`750` ms | `600`、`750` ms | 目标稳定窗、MCU 状态年龄上限 |
+| 对齐滞回 | `LONGPET_FOLLOW_ALIGN_ENTER_US`、`LONGPET_FOLLOW_ALIGN_EXIT_US` | `220`、`100` μs | `220`、`100` μs | 头部偏移进入、退出对齐旋转阈值，使用 `head_offset` |
+| 对齐驻留 | `LONGPET_FOLLOW_ALIGN_ENTER_DWELL_MS`、`LONGPET_FOLLOW_ALIGN_EXIT_DWELL_MS` | `400`、`400` ms | `400`、`400` ms | 对齐旋转进入、退出条件保持时间 |
+| 动作保持 | `LONGPET_FOLLOW_MIN_MOTION_MS` | `300` ms | `300` ms | 最短动作保持时间，失效停车优先 |
+| 远距滞回 | `LONGPET_FOLLOW_FAR_ENTER_HEIGHT`、`LONGPET_FOLLOW_FAR_EXIT_HEIGHT` | `0.28`、`0.34` | `0.53`、`0.57` | 进入 FAR、退出 FAR 的归一化人物框高度 |
+| 近距滞回 | `LONGPET_FOLLOW_NEAR_ENTER_HEIGHT`、`LONGPET_FOLLOW_NEAR_EXIT_HEIGHT` | `0.78`、`0.70` | `0.84`、`0.78` | 进入 NEAR、退出 NEAR 的归一化人物框高度 |
+| 跟随速度 | `LONGPET_FOLLOW_FORWARD_SPEED`、`LONGPET_FOLLOW_ROTATE_SPEED` | `12`、`10` | `12`、`10` | 前进、原地旋转控制量，范围 1～100 |
+
+FAR 且头身对齐时低速前进，GOOD 或 NEAR 时停车。人物框高度用于距离分级，不作为米制测距；旧 MCU area 阈值不参与底盘距离决策。
 
 ## C.9 Runtime / systemd / 环境变量
 
