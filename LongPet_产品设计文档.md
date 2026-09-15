@@ -26,43 +26,48 @@
 
 ## 摘要
 
-LongPet 是面向老年人日常陪伴、事项提醒与家庭联系的 LoongArch 智能终端原型。针对老人端操作复杂、日常事项容易遗漏，以及家属难以基于同一份真实记录提供协助的问题，产品将大按钮触控、语音入口、提醒与今日关怀集中在设备端，将较复杂的管理、状态查看和远程协助交给家属端 Family Desktop。老人和家属通过同一设备业务状态协作：提醒可由触摸、家属端或在线语音工具创建，到时由本机触发，只有老人确认后才计入完成；家属可查看已记录的关怀信息，并通过双向音视频通话保持联系。
+LongPet 是面向老年人日常陪伴、事项提醒和家庭联系的 LoongArch 智能陪伴机器人原型。产品以大按钮触控和语音提供简洁的本机入口，通过 Family Desktop 家属端承担提醒维护、状态查看、视频联系和远程协助。两端共享设备业务状态，支持提醒创建、触发与确认的完整流程，并将饮水和提醒完成情况汇总为今日关怀，便于老人使用和家属协同。
 
-原型以龙芯 2K0300 为主控，在单核、无 LSX/LASX 向量指令的条件下运行 Qt6 界面、本地业务、本地关键词识别和人物视觉。预训练声学模型支撑本地 KWS 唤醒与有限快捷操作；项目基于 TinyissimoYOLO 结构训练并部署正式 V1.2 人物检测模型，以低频 Detector 和帧间 Tracker 共同形成带时效的人物观测，供家属端 AI 视野、自动跟头与人物跟随复用。开放式对话由在线 ASR、LLM、TTS Provider 提供，工具调用须经本机业务规则校验；断网时保留已设提醒、本地快捷操作和已配置的陪伴音频.
+原型以龙芯 2K0300 为主控，在单核、无 LSX/LASX 向量指令的条件下集成 Qt6 界面、本地关键词识别和人物视觉。项目修复 ONNX Runtime 标量计算路径的数值问题，采用 Hybrid Rootfs 整合基础系统与 AI、多媒体组件，完成目标板运行适配。视觉采用基于 TinyissimoYOLO 结构训练的 V1.2 人物模型，通过低频检测与帧间跟踪协同，在单人物板端测试中达到约 7～9 Hz 的目标位置更新频率；统一观测供 AI 视野、自动跟头和人物跟随复用。在线 ASR、LLM、TTS 扩展自然语言对话，工具调用经过本地业务校验；断网时仍保留已设提醒、本地快捷操作和已配置的陪伴音频。
 
-人物跟随由家属显式开启，只在有人看护的低速场景中依据有效目标、头身朝向和画面远近代理受限靠近，不承担自主导航或避障。龙芯主控负责感知、业务与控制权仲裁，ESP32-S3 运动 MCU 独立校验模式、命令时效与故障，并在控制失效时撤销底盘驱动。为使图形、语音和视觉在目标板上可靠运行，项目修复了 ONNX Runtime 无向量指令路径的数值问题，采用保留稳定基础系统、按清单合入用户态组件并校验兼容性与完整性的 Hybrid Rootfs。当前原型已完成相应的软件、板端、双端和受控实机功能验证，长期稳定性已有初步测试，适老性、整机安全与量化性能仍需继续验收。该原型展示了在受限国产架构平台上组合适老交互、端侧感知、在线智能与失效安全运动的可行路径。
+运动系统采用龙芯主控与 ESP32-S3 MCU 分工架构：主控负责感知、策略和控制权仲裁，MCU 独立校验模式、命令时效与故障，控制失效时撤销底盘驱动。人物跟随由家属显式开启，面向有人看护的低速室内场景。原型已完成软件、板端、双端和受控实机功能验证，58 项运动测试中 56 项通过、2 项横向平移暂缓。项目实现了国产架构平台上的多模态陪伴与运动协同，为后续适老使用测试、整机保护和产品工程化奠定基础。
 
 ## 关键词
 
-LongPet；适老陪伴；LoongArch；本地感知；在线 AI；家属协同；人物跟随；运动安全
+适老陪伴机器人；LoongArch；端侧 AI；家庭协同；人物检测与跟踪；运动安全
 
 ## 缩略语与术语表
 
-| 术语 | 含义及本文使用范围 |
+| 术语 | 定义与项目用法 |
 | --- | --- |
-| LoongArch | 龙芯处理器指令集架构；本文目标板为龙芯 2K0300，底层软件中的 `2K300`、`LS2K300`、`2K300-PAI` 为对应平台的沿用标识。 |
-| LSX / LASX | LoongArch 向量指令扩展；当前 2K0300 目标平台不支持，部署产物须避免依赖。 |
-| KWS（Keyword Spotting） | 关键词识别；当前使用预训练 WeKWS FSMN-CTC 声学模型，项目完成端侧集成、词条配置与业务映射。 |
-| VAD（Voice Activity Detection） | 语音活动检测；本地 KWS 链路用它筛选音频并减少静音时的推理开销。 |
-| ASR（Automatic Speech Recognition） | 自动语音识别；当前开放式语音会话通过在线 Provider 转写。 |
-| LLM（Large Language Model） | 大语言模型；当前用于在线对话和受限工具调用，完整本地 LLM 不在本版交付范围。 |
-| TTS（Text to Speech） | 文本转语音；当前在线语音会话通过 Provider 合成回答音频。 |
-| ONNX / ONNX Runtime | ONNX 为模型交换格式；ONNX Runtime 为板端模型推理运行时，当前 2K0300 构建采用已修复并验证的标量计算路径。 |
-| MCU（Microcontroller Unit） | 微控制器；本文特指负责底盘、头部执行和失效保护的 ESP32-S3 Motion MCU。 |
-| UART（Universal Asynchronous Receiver/Transmitter） | 异步串行通信接口；龙芯主控与运动 MCU 经双向 UART 交换命令和状态。 |
-| V4L2（Video4Linux2） | Linux 视频设备接口；当前 USB 摄像头通过该链路供视觉与媒体业务使用。 |
-| ALSA（Advanced Linux Sound Architecture） | Linux 音频设备接口；当前 USB 声卡的录放链路使用它。 |
-| Provider | 通过可配置接口提供外部能力的服务实现；本文主要指在线 ASR、LLM、TTS 和天气服务。 |
-| Port / Adapter | 应用的能力契约及其具体接入实现；用于隔离业务规则与硬件、网络或第三方服务。 |
-| FamilyLink | LongPet 设备向 Family Desktop 提供的家庭连接服务，承载业务请求和经授权的实时会话；当前面向受控局域网。 |
-| Family Desktop | 运行于家属 PC 的桌面应用，承担管理、查看、通话、模式选择和人工远控。 |
-| TargetObservation | 带人物位置、状态、时间戳和新鲜度的统一视觉观测，供 AI 视野、自动跟头和人物跟随共用。 |
-| Hybrid Rootfs | 保留已验证的板端基础系统，按清单合入 Buildroot 用户态组件并进行依赖、ABI/ISA 与完整性校验的系统交付方案。 |
-| Detector | 人物检测器；当前使用项目训练的 TinyissimoYOLO person-only 权重进行搜索与纠偏，正式部署模型为 V1.2。 |
-| Tracker | 帧间目标跟踪器；当前使用 Sparse Lucas–Kanade 方法在检测间隙更新人物位置。 |
-| Frozen Test | 训练与模型选择之外固定保留的测试集；本文主要指 V1.2 实拍人物数据的 85 张冻结测试帧。 |
-| Tool Calling | 在线 LLM 提出的结构化工具调用；LongPet 仅在本机校验并授权后执行限定业务动作。 |
-| Vision Handoff | 人物视觉模型的完整训练、评测、模型清单与交接资料；训练代码位于 LongPet 工程。 |
+| LoongArch | 龙芯处理器指令集架构，LongPet 的目标主控为龙芯 2K0300。 |
+| LSX / LASX | LoongArch 的向量指令扩展；2K0300 使用不依赖这些扩展的运行库。 |
+| ISA（Instruction Set Architecture） | 指令集架构，规定处理器支持的指令及其执行语义。 |
+| ABI（Application Binary Interface） | 应用二进制接口，规定调用约定、数据布局等二进制兼容规则。 |
+| KWS（Keyword Spotting） | 关键词识别，用于本地唤醒和预设快捷操作；项目集成预训练 WeKWS FSMN-CTC 声学模型。 |
+| VAD（Voice Activity Detection） | 语音活动检测，用于筛选有效语音片段，减少静音期间的推理开销。 |
+| ASR（Automatic Speech Recognition） | 自动语音识别，将用户语音转为文本。 |
+| LLM（Large Language Model） | 大语言模型，用于自然语言对话和结构化工具调用。 |
+| TTS（Text to Speech） | 语音合成，将回答文本转为可播放音频。 |
+| ONNX（Open Neural Network Exchange） | 模型交换格式，用于导出和部署项目的语音、视觉模型。 |
+| ONNX Runtime | ONNX 模型推理运行时；项目为 2K0300 适配并验证了标量计算路径。 |
+| MCU（Microcontroller Unit） | 微控制器；LongPet 使用 ESP32-S3 Motion MCU 执行底盘、头部控制和失效保护。 |
+| UART（Universal Asynchronous Receiver/Transmitter） | 异步串行通信接口，用于龙芯主控与运动 MCU 交换命令和状态。 |
+| V4L2（Video4Linux2） | Linux 视频设备接口，用于接入 USB 摄像头。 |
+| ALSA（Advanced Linux Sound Architecture） | Linux 音频子系统，用于 USB 声卡录音、播放及音量控制。 |
+| Provider | 提供 ASR、LLM、TTS 或天气等能力的服务实现，可按部署配置选择。 |
+| Port | 业务层定义的能力接口，描述设备或外部服务应提供的操作与结果。 |
+| Adapter | Port 的具体实现，负责接入硬件、操作系统或外部服务。 |
+| FamilyLink | LongPet 向家属端提供的家庭连接服务，通过受控局域网承载业务请求和授权实时会话。 |
+| Family Desktop | 家属 PC 桌面应用，提供状态查看、提醒管理、通话、模式选择和人工远控。 |
+| TargetObservation | 包含人物位置、状态、时间戳和新鲜度的统一视觉观测，供 AI 视野、自动跟头和人物跟随共享。 |
+| Hybrid Rootfs | 保留稳定基础系统，按清单合入 Buildroot 用户态组件，并校验依赖、二进制兼容性和完整性的根文件系统方案。 |
+| TinyissimoYOLO | 项目采用的轻量检测网络结构，用于训练人物检测模型。 |
+| Detector | 人物检测器，负责目标搜索、重获和周期纠偏。 |
+| Tracker | 帧间目标跟踪器，使用 Sparse Lucas–Kanade 方法在检测间隙更新人物位置。 |
+| Frozen Test | 固定保留的测试集，用于人物模型的最终评测和版本对比。 |
+| Tool Calling | 模型提出的结构化工具调用，经本地业务校验后执行限定操作。 |
+| Vision Handoff | 人物视觉模块的交接包，包含训练、评测、模型清单和部署复现材料。 |
 
 ## 图目录
 
