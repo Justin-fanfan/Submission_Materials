@@ -2,7 +2,7 @@
 
 | 文档信息 | 内容 |
 | --- | --- |
-| 文档版本 | V0.13（编写中） |
+| 文档版本 | V0.14（编写中） |
 | 产品名称 | LongPet |
 | 文档类型 | 产品设计文档 |
 
@@ -23,6 +23,7 @@
 | V0.11 | 2026-09-14 | 完成第 12 章 |
 | V0.12 | 2026-09-15 | 完成第 13～18 章，统一工程化、交付、技术权衡、成果边界与后续路线 |
 | V0.13 | 2026-09-15 | 完成摘要、关键词、术语表及第 1、2 章，统一前部产品定位与版本边界 |
+| V0.14 | 2026-09-15 | 完成附件CEF |
 
 ## 摘要
 
@@ -44,7 +45,7 @@ LongPet 是面向老年人日常陪伴、事项提醒和家庭联系的 LoongArc
 | LSX / LASX | LoongArch 的向量指令扩展；2K0300 使用不依赖这些扩展的运行库。 |
 | ISA（Instruction Set Architecture） | 指令集架构，规定处理器支持的指令及其执行语义。 |
 | ABI（Application Binary Interface） | 应用二进制接口，规定调用约定、数据布局等二进制兼容规则。 |
-| KWS（Keyword Spotting） | 关键词识别，用于本地唤醒和预设快捷操作；项目集成预训练 WeKWS FSMN-CTC 声学模型。 |
+| KWS（Keyword Spotting） | 关键词识别，用于本地唤醒和预设快捷操作；项目集成第三方预训练 FSMN-CTC 声学模型。 |
 | VAD（Voice Activity Detection） | 语音活动检测，用于筛选有效语音片段，减少静音期间的推理开销。 |
 | ASR（Automatic Speech Recognition） | 自动语音识别，将用户语音转为文本。 |
 | LLM（Large Language Model） | 大语言模型，用于自然语言对话和结构化工具调用。 |
@@ -1784,7 +1785,7 @@ LongPet 在龙芯 2K0300 上完成关键词唤醒（KWS）和人物视觉推理�
 
 ### 9.2 本地 KWS、声学模型与关键词策略
 
-本地 KWS 基于预训练 WeKWS FSMN-CTC ONNX 模型及中文 token 表，项目完成了从音频采集、FBank、CTC 词条匹配、自适应 VAD 到进程桥接和业务动作映射的端侧集成，并针对产品词条配置别名和阈值。声学文件为 `components/longpet-kws/assets/fsmn/fsmn_ctc.onnx`（3,065,258 B；SHA-256 `6febd9f7f15c47caed88d434d810651e34215334c66961b9ba66251fa04d98c4`）。产品 KWS 使用 Python、NumPy 和 ONNX Runtime `CPUExecutionProvider` 运行。
+本地 KWS 采用第三方预训练 FSMN-CTC ONNX 模型及配套中文 token 表。项目完成音频采集、FBank、CTC 词条匹配、自适应 VAD、进程桥接和业务动作映射的端侧集成，并针对产品词条配置别名和阈值。声学文件为 `components/longpet-kws/assets/fsmn/fsmn_ctc.onnx`（3,065,258 B；SHA-256 `6febd9f7f15c47caed88d434d810651e34215334c66961b9ba66251fa04d98c4`），来源状态见 E.6。产品 KWS 使用 Python、NumPy 和 ONNX Runtime `CPUExecutionProvider` 运行。
 
 板端默认以 48 kHz 单声道 PCM 每约 100 ms 取一块，转换为模型 16 kHz 输入；自适应能量 VAD 在静音时跳过 ONNX，保留约 300 ms 语音前缀，连续约 500 ms 静音后重置流式缓存。`KwsProcessAdapter` 通过独立 bridge 接收逐行 JSON 事件；模型常驻，暂停时释放采集，异常退出可重启。音频会话只有在带 ID 的暂停确认后才获麦克风；超时按失败处理。
 
@@ -3061,7 +3062,213 @@ FamilyLink REST 使用 UTF-8 JSON 和 `/api/v1` 路径前缀。设备默认回�
 
 表 B-9 各接口的失效语义。统一的错误反馈、时效判断和恢复入口便于本地端与家属端保持一致状态；自动化测试和实机验收见第 13 章。
 
-### 附录 C 关键配置参数表
+# 附录 C 关键配置参数表
+
+## C.1 配置管理说明
+
+本附录列出各模块的配置入口、默认值、部署示例和固定参数，便于复现运行环境与调整功能。表中“默认”为未配置时的回退值，“模板/部署”为工程提供的设置，实际运行值由部署配置决定。AI 和天气配置中，同名有效环境变量优先于 INI；`asr/model` 表示 `[asr]` 分组下的 `model`，其余分组同理。发布配置采用分项 Provider 结构。
+
+部署目录以 `<APP_ROOT>`、`<CONFIG_DIR>`、`<KWS_ROOT>`、`<MODEL_DIR>`、`<DATA_DIR>` 表示，使用时替换为实际路径；`/dev/*` 为设备节点。密钥、令牌和位置使用占位符。“条件必需”表示启用该能力时必须提供，“固定”表示编译期常量。
+
+## C.2 AI Provider
+
+ASR、LLM、TTS 分别配置服务、模型和凭据，可按部署需求独立组合；会话、流式输出和分句合成参数由 Voice 模块统一管理。
+
+| 配置类别 | 配置项 | 作用 | 是否必需 | 当前默认/示例 | 备注 |
+| --- | --- | --- | --- | --- | --- |
+| ASR | `asr/provider` / `LONGPET_ASR_PROVIDER` | 选择转写实现 | 条件必需 | 模板 `aliyun` | 支持 `aliyun/dashscope`、`openai/openai-compatible`；分组存在但未填时不自动补 Provider |
+| ASR | `asr/api_base_url` / `LONGPET_ASR_BASE_URL` | 转写服务基址 | 条件必需 | `https://api.example.com/v1` | 示例需替换为所选 Provider 的真实服务入口 |
+| ASR | `asr/api_key` / `LONGPET_ASR_API_KEY` | 服务鉴权 | 按服务要求 | `<API_KEY>` | 敏感配置 |
+| ASR | `asr/model` / `LONGPET_ASR_MODEL` | 转写模型 | 条件必需 | 模板 `qwen-audio-3.0-asr-flash` | 按所选服务配置模型名称 |
+| ASR | `asr/language` / `LONGPET_ASR_LANGUAGE` | 转写语言 | 否 | 默认 `zh` | 与界面语言分开 |
+| LLM | `llm/provider` / `LONGPET_LLM_PROVIDER` | 选择对话实现 | 条件必需 | 模板 `openai-compatible` | `aliyun/dashscope` 也走兼容 Chat Completions 实现 |
+| LLM | `llm/api_base_url` / `LONGPET_LLM_BASE_URL` | 对话服务基址 | 条件必需 | `https://api.example.com/v1` | 与 ASR 独立 |
+| LLM | `llm/api_key` / `LONGPET_LLM_API_KEY` | 对话鉴权 | 按服务要求 | `<API_KEY>` | 敏感配置 |
+| LLM | `llm/model` / `LONGPET_LLM_MODEL` | 对话模型 | 条件必需 | 模板 `qwen-plus` | 由配置选择，无内置本地 LLM 权重 |
+| TTS | `tts/provider` / `LONGPET_TTS_PROVIDER` | 选择合成实现 | 条件必需 | 模板 `aliyun` | 支持值同 ASR |
+| TTS | `tts/api_base_url` / `LONGPET_TTS_BASE_URL` | 合成服务基址 | 条件必需 | `https://api.example.com/v1` | 与 ASR/LLM 独立 |
+| TTS | `tts/api_key` / `LONGPET_TTS_API_KEY` | 合成鉴权 | 按服务要求 | `<API_KEY>` | 敏感配置 |
+| TTS | `tts/model` / `LONGPET_TTS_MODEL` | 合成模型 | 条件必需 | 模板 `qwen3-tts-flash` | 模型系列影响阿里云接口选择 |
+| TTS | `tts/voice` / `LONGPET_TTS_VOICE` | 合成音色 | 条件必需 | 模板 `Cherry` | 须与服务模型兼容 |
+| 对话 | `voice/system_prompt` / `LONGPET_VOICE_SYSTEM_PROMPT` | 系统提示词 | 否 | 默认空；模板要求中文、温和、简短回答 | 空值时不添加 system 消息 |
+| 对话 | `voice/request_timeout_ms` / `LONGPET_VOICE_REQUEST_TIMEOUT_MS` | Provider 请求等待上限 | 否 | 默认 `30000` ms | ASR/LLM/TTS 共用该时限 |
+| 对话 | `voice/history_turns` / `LONGPET_VOICE_HISTORY_TURNS` | 保留对话轮数 | 否 | 默认 `4` | 历史保存在进程内 |
+| 对话 | `voice/llm_stream_enabled` / `LONGPET_VOICE_LLM_STREAM_ENABLED` | 流式回答 | 否 | 默认 `true` | SSE |
+| 合成队列 | `voice/sentence_tts_enabled` / `LONGPET_VOICE_SENTENCE_TTS_ENABLED` | 分句合成 | 否 | 默认 `true` | 与流式回答协作 |
+| 合成队列 | `voice/sentence_minimum_characters`、`voice/sentence_maximum_characters` | 分句长度边界 | 否 | 默认 `6`、`120` 字符 | 对应 `LONGPET_VOICE_SENTENCE_MINIMUM_CHARACTERS`、`LONGPET_VOICE_SENTENCE_MAXIMUM_CHARACTERS` |
+| 合成队列 | `voice/tts_prebuffer_segments` / `LONGPET_VOICE_TTS_PREBUFFER_SEGMENTS` | 预合成缓冲段数 | 否 | 默认 `2` | 板端模板建议保持 1～2 |
+| 可用性 | `voice/availability_retry_ms` / `LONGPET_VOICE_AVAILABILITY_RETRY_MS` | 失败后再次允许在线尝试的间隔 | 否 | 默认 `30000` ms | 非持续健康检查频率 |
+| 可用性 | `voice/require_internet` / `LONGPET_VOICE_REQUIRE_INTERNET` | 是否要求互联网可用 | 否 | 默认 `true` | 全部 Provider 位于局域网时可关闭，仍检查本地网络 |
+| 工具 | `tools/enabled`、`tools/maximum_rounds` | 启用业务工具及限制往返轮数 | 否 | 默认 `true`、`3` | 对应 `LONGPET_VOICE_TOOLS_ENABLED`、`LONGPET_VOICE_TOOLS_MAXIMUM_ROUNDS` |
+
+## C.3 Voice / KWS
+
+在线录音与本地 KWS 分别配置 VAD，兼顾对话断句和常驻关键词监听；KWS bridge 与应用协调麦克风交接和进程恢复。
+
+| 配置类别 | 配置项 | 作用 | 是否必需 | 当前默认/示例 | 备注 |
+| --- | --- | --- | --- | --- | --- |
+| 在线录音 | `voice/vad_enabled` / `LONGPET_VOICE_VAD_ENABLED` | 自动断句开关 | 否 | 默认 `true` | 在线录音 VAD |
+| 在线录音 | `voice/vad_threshold_db`、`voice/vad_noise_ratio` | 能量下限及背景噪声倍率 | 否 | 默认 `-55.0` dBFS、`2.0` | 对应 `LONGPET_VOICE_VAD_THRESHOLD_DB`、`LONGPET_VOICE_VAD_NOISE_RATIO` |
+| 在线录音 | `voice/vad_silence_timeout_ms` / `LONGPET_VOICE_VAD_SILENCE_TIMEOUT_MS` | 连续静音结束录音 | 否 | 默认 `900` ms | 不同于 KWS 固定静音结束窗 |
+| 在线录音 | `voice/recording_minimum_ms`、`voice/vad_minimum_speech_ms` | 最短录音及最少语音时长 | 否 | 默认 `600`、`160` ms | 对应 `LONGPET_VOICE_RECORDING_MINIMUM_MS`、`LONGPET_VOICE_VAD_MINIMUM_SPEECH_MS` |
+| 在线录音 | `voice/recording_maximum_ms` / `LONGPET_VOICE_RECORDING_MAXIMUM_MS` | 最大录音时长 | 否 | 默认 `12000` ms | 达到上限结束录音 |
+| KWS 进程 | `kws/enabled` / `LONGPET_KWS_ENABLED` | 本地监听开关 | 否 | 默认 `false`；模板 `true` | 应用由 Qt 统一管理 bridge 和麦克风访问 |
+| KWS 进程 | `kws/python_program` / `LONGPET_KWS_PYTHON` | Python 可执行程序 | 条件必需 | 默认 `python3`；模板指定系统 Python | 路径用部署配置指定 |
+| KWS 进程 | `kws/bridge_script` / `LONGPET_KWS_BRIDGE_SCRIPT` | bridge 入口 | 条件必需 | `<KWS_ROOT>/longpet_kws_bridge.py` | 仓库对应 `deploy/kws/longpet_kws_bridge.py` |
+| KWS 进程 | `kws/kws_root` / `LONGPET_KWS_ROOT` | 声学组件根目录 | 条件必需 | `<KWS_ROOT>/upstream` | 部署 `components/longpet-kws` 组件及声学资产 |
+| KWS 模型 | `kws/model_path` / `LONGPET_KWS_MODEL` | FSMN-CTC 声学模型 | 条件必需 | `<KWS_ROOT>/upstream/assets/fsmn/fsmn_ctc.onnx` | SHA-256：`6febd9f7f15c47caed88d434d810651e34215334c66961b9ba66251fa04d98c4` |
+| KWS 词表 | `kws/tokens_path` / `LONGPET_KWS_TOKENS` | 中文 token 词表 | 条件必需 | `<KWS_ROOT>/upstream/assets/fsmn/tokens.txt` | 与模型配套；不是鉴权 Token |
+| KWS 采集 | `kws/capture_backend` / `LONGPET_KWS_CAPTURE_BACKEND` | 音频采集后端 | 否 | 默认 `sounddevice` | `arecord` 为备用后端 |
+| KWS 采集 | `kws/input_device` / `LONGPET_KWS_INPUT_DEVICE` | PortAudio 输入设备 | 否 | 默认空 | 根据实际音频设备选择输入 |
+| KWS 采集 | `kws/alsa_device` / `LONGPET_KWS_ALSA_DEVICE` | ALSA 设备选择 | `arecord` 时必需 | 模板 `plughw:CARD=Device,DEV=0` | 解析顺序：KWS 环境变量 → `LONGPET_AI_CAPTURE_DEVICE` → INI |
+| KWS 采集 | `kws/input_sample_rate` / `LONGPET_KWS_INPUT_SAMPLE_RATE` | 采集采样率 | 否 | 默认 `48000` Hz | 重采样至声学模型固定 `16000` Hz；单声道 S16_LE |
+| KWS 词条 | `SUPPORTED_KEYWORDS`、`KEYWORD_ALIASES` | 词条及同音映射 | 固定 | 11 词：小龙小龙、你好、陪我说话、救命、停止、打开提醒、现在几点、联系家人、返回主页、音量大点、音量小点 | bridge 覆盖词条；“返回主页”匹配“反回主页”；非 INI 词条配置 |
+| KWS 阈值 | `kws/wake_threshold` / `LONGPET_KWS_WAKE_THRESHOLD` | 唤醒阈值 | 否 | 默认 `0.15` | 需按真实环境复验 |
+| KWS 阈值 | `kws/hello_threshold` / `LONGPET_KWS_HELLO_THRESHOLD` | “你好”识别阈值 | 否 | 默认 `0.10` | 传给 bridge 的 `--nihao-threshold`；业务策略另行决定是否处理 |
+| KWS 阈值 | `kws/companion_threshold`、`kws/emergency_threshold` | 陪伴、紧急词阈值 | 否 | 默认均 `0.05` | 对应 `LONGPET_KWS_COMPANION_THRESHOLD`、`LONGPET_KWS_EMERGENCY_THRESHOLD` |
+| KWS 阈值 | `kws/command_threshold` / `LONGPET_KWS_COMMAND_THRESHOLD` | 其余快捷词统一阈值 | 否 | 默认 `0.05` | 停止/提醒/时间/联系家人/主页/音量 |
+| KWS VAD | `kws/vad_threshold_db`、`kws/vad_noise_ratio` | 自适应能量门控 | 否 | 默认 `-60.0` dBFS、`2.5` | 对应 `LONGPET_KWS_VAD_THRESHOLD_DB`、`LONGPET_KWS_VAD_NOISE_RATIO` |
+| KWS VAD | `EnergyVad` 的前缀/结束窗 | 保留起音、结束一句 | 固定 | 前缀 `300` ms、静音 `500` ms | bridge 启用能量 VAD，保留起音并识别静音结束 |
+| KWS 会话 | `kws/command_timeout_ms` / `LONGPET_KWS_COMMAND_TIMEOUT_MS` | 唤醒后等待业务命令时限 | 否 | 默认 `10000` ms | 应用策略控制，非 bridge 的模型超时参数 |
+| KWS 交接 | `kws/pause_timeout_ms` / `LONGPET_KWS_PAUSE_TIMEOUT_MS` | 等待麦克风释放确认 | 否 | 默认 `5000` ms | Qt 启动 bridge 时固定带 `--start-paused` |
+| KWS 交接 | `kws/resume_cooldown_ms` / `LONGPET_KWS_RESUME_COOLDOWN_MS` | 恢复监听冷却时间 | 否 | 默认 `1200` ms | 防止自身播放尾音触发 |
+| KWS 恢复 | `kws/restart_delay_ms` / `LONGPET_KWS_RESTART_DELAY_MS` | 进程失败重启等待 | 否 | 默认 `2000` ms | 与 systemd 重启应用不同 |
+| 离线语音 | `offline/enabled`、`offline/companion_audio_directory` | 启用及定位陪伴音频 | 启用时目录必需 | 默认启用；`<APP_ROOT>/offline-audio` | 对应 `LONGPET_OFFLINE_VOICE_ENABLED`、`LONGPET_OFFLINE_COMPANION_AUDIO_DIR` |
+
+## C.4 Vision
+
+视觉模块采用正式 V1.2 模型，检测、跟踪、观测时效与相机采集分别配置。模型文件名和 SHA-256 用于部署校验，实验 V1.3 独立管理。
+
+| 配置类别 | 配置项 | 作用 | 是否必需 | 当前默认/示例 | 备注 |
+| --- | --- | --- | --- | --- | --- |
+| 启停 | `LONGPET_VISION_ENABLED` | 本地人物推理开关 | 否 | 默认关闭；service `1` | 监看画面可独立于推理连接 |
+| 检测器 | `LONGPET_VISION_DETECTOR` | 选择 Detector | 否 | 默认/部署 `tinyissimo` | `tinyissimo-yolo` 为别名；保留 `fastestdet` 兼容入口，非正式基线 |
+| 正式模型 | `LONGPET_VISION_MODEL_PATH` | 加载模型文件 | 条件必需 | `<MODEL_DIR>/tinyissimo-person-128-longpet-v1.onnx` | **V1.2 / FINAL_RECOMMENDED**；代码及 service 均使用此文件名 |
+| 正式模型 | V1.2 SHA-256 | 核对权重完整性 | 发布必需 | `cb3defedb3ac01006d4caa5312c21d4a674e5a808e885067f2bc67e8f822f89c` | 与 Handoff 实体文件一致 |
+| 实验模型 | V1.3 资产状态 | 隔离实验权重 | 固定标识 | `tinyissimo-person-128-longpet-v2.onnx`：**EXPERIMENTAL** | 非当前默认；不得替换正式模型而不重新验收 |
+| 输入 | 模型输入形状 | 规定适配器输入 | 固定 | FP32 `[1,3,128,128]`，128×128 | ONNX opset 17 |
+| 检测阈值 | `LONGPET_VISION_CONFIDENCE_THRESHOLD` | 过滤低分检测 | 否 | 默认 `0.25` | 有效范围 `0.01～0.99` |
+| NMS | `LONGPET_VISION_NMS_THRESHOLD` | IoU 抑制阈值 | 否 | 默认 `0.45` | 有效范围 `0.01～0.99` |
+| 推理 | `LONGPET_VISION_INFERENCE_THREADS` | Detector 推理线程数 | 否 | 默认 `1` | 范围 1～64；板端基准保持单线程 |
+| 跟踪 | `LONGPET_VISION_TRACKING_ENABLED` | Detector/Tracker 协作 | 否 | 默认启用；service `1` | Sparse LK |
+| 调度 | `LONGPET_VISION_TRACKER_INTERVAL_MS` | 跟踪请求间隔 | 否 | 默认/部署 `100` ms | 请求频率约 10 Hz，实际更新频率见第 9 章实测 |
+| 调度 | `LONGPET_VISION_DETECTOR_CORRECTION_MS` | 正常跟踪时检测校正间隔 | 否 | 默认/部署 `8000` ms | 丢失与搜索使用下列独立间隔 |
+| 调度 | `LONGPET_VISION_SEARCH_INTERVAL_MS`、`LONGPET_VISION_LOST_INTERVAL_MS` | 搜索/丢失重检间隔 | 否 | 默认/部署均 `250` ms | 实际更新受推理耗时限制 |
+| 时效 | `LONGPET_VISION_FRESHNESS_MS` | 服务级观测新鲜度窗口 | 否 | 默认 `2500` ms | 自动运动采用更严格的 500 ms，见 C.8 |
+| 跟踪质量 | `LONGPET_VISION_TRACKER_MIN_CONFIDENCE`、`LONGPET_VISION_TRACKER_LOW_CONFIDENCE_FRAMES` | 低质量连续帧触发重检 | 否 | 默认 `0.15`、`3` 帧 | 跟踪质量与检测置信度分别判定 |
+| LK 图像 | `LONGPET_VISION_TRACKER_SCALE` | 跟踪处理缩放比例 | 否 | 默认 `0.5` | 范围 `0.25～1.0` |
+| LK 特征 | `LONGPET_VISION_TRACKER_MAX_POINTS`、`LONGPET_VISION_TRACKER_MIN_POINTS` | 最大/最少有效点数 | 否 | 默认 `60`、`6` | 最小点数不超过最大点数 |
+| LK 特征 | `LONGPET_VISION_TRACKER_QUALITY`、`LONGPET_VISION_TRACKER_MIN_DISTANCE`、`LONGPET_VISION_TRACKER_MAX_ERROR` | 角点质量、间距、误差边界 | 否 | 默认 `0.01`、`5.0` px、`20.0` | 像素参数作用于跟踪处理图像 |
+| 相机 | `LONGPET_CAMERA_DEVICE` | UVC 设备节点 | 条件必需 | 默认/部署 `/dev/video0` | 优先于旧通话相机变量；硬件见附录 D |
+| 相机 | `LONGPET_CAMERA_ROTATION` | 装配方向校正 | 否 | 默认 `0`；部署 `180` 度 | 仅 `0/90/180/270` |
+| 相机采集 | GStreamer/V4L2 caps | 采集工作点 | 固定 | MJPEG、640×480、请求 30 FPS | 不等同于推理频率 |
+
+## C.5 FamilyLink
+
+FamilyLink 统一配置业务监听与鉴权，通话、AI 视野和远控使用独立实时端口与会话参数。
+
+| 配置类别 | 配置项 | 作用 | 是否必需 | 当前默认/示例 | 备注 |
+| --- | --- | --- | --- | --- | --- |
+| HTTP | `LONGPET_FAMILY_LINK_ADDRESS` | REST 监听地址 | 否 | 默认 `127.0.0.1`；局域网示例 `0.0.0.0` | 对外监听须提供 Token；service 模板未设置地址和 Token |
+| HTTP | `LONGPET_FAMILY_LINK_PORT` | REST 端口 | 否 | 默认 `8787` | API 前缀固定 `/api/v1` |
+| 鉴权 | `LONGPET_FAMILY_LINK_TOKEN` | 长期 Bearer 鉴权 | 对外监听必需 | `<TOKEN>` | 敏感配置；实时会话另行生成短时 Token |
+| 通话 WS | `LONGPET_MEDIA_ADDRESS`、`LONGPET_MEDIA_PORT` | 通话媒体监听 | 否 | 默认 `0.0.0.0`、`8788` | WS 通道基准 `/media/v1` |
+| 监看 WS | `LONGPET_VISION_MONITOR_PORT` | AI 视野端口 | 否 | 默认/部署 `8789` | 监听地址沿用 FamilyLink；路径固定 `/vision-monitor/v1` |
+| 监看 WS | `LONGPET_VISION_MONITOR_FPS` | 监看帧率上限 | 否 | 默认/部署 `7` FPS | 限制 1～10；与本地检测调度独立 |
+| 远控 WS | `LONGPET_MOTION_CONTROL_PORT` | 远控端口 | 否 | 默认/部署 `8790` | 监听地址沿用 FamilyLink；路径固定 `/motion-control/v1` |
+| 短时会话 | `SessionLifetimeSeconds`、`AuthenticationTimeoutMs` | 监看/远控签发有效窗及首帧鉴权等待 | 固定 | `30` s、`6000` ms | 只适用于这两类会话，非通话全程时限 |
+| 媒体音频 | `AudioChunkBytes` | 通话 PCM 工作点 | 固定 | S16_LE、16 kHz、单声道；640 bytes / 20 ms | 通话设备由 `LONGPET_CALL_CAPTURE_DEVICE`、`LONGPET_CALL_PLAYBACK_DEVICE` 选择 |
+| 媒体背压 | `MaximumSocketBacklog`、`RemoteVideoMinimumIntervalMs` | 控制通话发送积压及远端视频处理频率 | 固定 | `256` KiB、`120` ms | 视频 JPEG；完整协议见附录 B |
+| 远控租约 | `LONGPET_MOTION_REFRESH_MS`、`LONGPET_MOTION_REMOTE_LEASE_MS` | MOVE 刷新与应用层撤销控制 | 否 | 默认/部署 `150`、`350` ms | 完整运动参数见 C.8 |
+| 家属端连接 | `baseUrl`、`token` | 家属端目标设备和鉴权 | 实际设备连接必需 | `http://<DEVICE_HOST>:8787`、`<TOKEN>` | 由连接窗口输入；适配器补 `/api/v1`；初始可处于 mock 模式 |
+| 家属端 HTTP | `timeoutMs` | 请求等待上限 | 否 | 适配器默认 `6000` ms | 构造选项；不是板端 INI 字段 |
+
+## C.6 Weather
+
+天气查询通过经纬度指定地点，独立管理请求超时、刷新周期和快照时效。
+
+| 配置类别 | 配置项 | 作用 | 是否必需 | 当前默认/示例 | 备注 |
+| --- | --- | --- | --- | --- | --- |
+| 启停 | `weather/enabled` / `LONGPET_WEATHER_ENABLED` | 天气能力开关 | 否 | 默认 `false` | 启用后校验配置 |
+| Provider | `weather/provider` / `LONGPET_WEATHER_PROVIDER` | 选择天气实现 | 否 | 默认 `qweather` | 当前工厂提供 QWeather |
+| endpoint | `weather/api_host` / `LONGPET_WEATHER_API_HOST` | 天气服务 Host | 条件必需 | `<WEATHER_API_HOST>` | API 路径由实现拼接 `/weather/v1/current/{latitude}/{longitude}` |
+| 鉴权 | `weather/api_key` / `LONGPET_WEATHER_API_KEY` | 请求鉴权 | 条件必需 | `<API_KEY>` | 敏感配置；请求头 `X-QW-Api-Key` |
+| 地点 | `weather/latitude`、`weather/longitude` | 查询位置 | 条件必需 | `<LATITUDE>`、`<LONGITUDE>` | 对应 `LONGPET_WEATHER_LATITUDE`、`LONGPET_WEATHER_LONGITUDE`；部署时显式填写实际坐标 |
+| 语言 | `weather/language` / `LONGPET_WEATHER_LANGUAGE` | 天气文本语言 | 否 | 默认 `zh` | 与 ASR 语言独立 |
+| 请求 | `weather/request_timeout_ms` / `LONGPET_WEATHER_REQUEST_TIMEOUT_MS` | 独立天气超时 | 否 | 默认 `10000` ms | 下限 1000 ms |
+| 刷新 | `weather/refresh_minutes` / `LONGPET_WEATHER_REFRESH_MINUTES` | 正常刷新间隔 | 否 | 默认 `30` min | 下限 1 min；启动及网络恢复也触发刷新 |
+| 缓存 | `weather/stale_after_minutes` / `LONGPET_WEATHER_STALE_AFTER_MINUTES` | 标记旧快照过期 | 否 | 默认 `120` min | 下限 1 min；失败保留旧快照并按时效标记 |
+| 恢复/降级 | `m_retryTimer`、无快照状态 | 首次无数据时重试及显示降级 | 固定 | 无快照每 `60000` ms 重试；无数据显示未知 | 快照在进程内管理，网络恢复后刷新 |
+
+## C.7 数据库与本地数据
+
+数据库、配置、模型和离线音频按用途分别定位，业务记录持久保存，实时会话在进程内管理。
+
+| 配置类别 | 配置项 | 作用 | 是否必需 | 当前默认/示例 | 备注 |
+| --- | --- | --- | --- | --- | --- |
+| 数据库 | `LONGPET_DATABASE_PATH` | SQLite 文件覆盖路径 | 否 | 默认 Qt `AppLocalDataLocation/longpet.db`；service `<DATA_DIR>/longpet.db` | Application/Organization 名均为 `LongPet`；日程、照护记录属于个人数据 |
+| AI 配置 | `LONGPET_AI_CONFIG` | AI/Voice/KWS INI 文件位置 | 条件必需 | Linux 默认/模板 `<CONFIG_DIR>/ai.ini`；非 Linux `AppConfigLocation/longpet-ai.ini` | 分项环境变量可覆盖内容；文件含敏感配置 |
+| 天气配置 | `LONGPET_WEATHER_CONFIG` | 天气 INI 文件位置 | 条件必需 | Linux 默认/模板 `<CONFIG_DIR>/longpet-weather.ini`；非 Linux `AppConfigLocation/longpet-weather.ini` | 文件含 Key 和位置 |
+| 模型 | `LONGPET_VISION_MODEL_PATH`、`LONGPET_KWS_MODEL`、`LONGPET_KWS_TOKENS` | 推理资产定位 | 启用时必需 | 见 C.3、C.4 | 模型不写入业务 SQLite |
+| 离线媒体 | `LONGPET_OFFLINE_COMPANION_AUDIO_DIR` | 陪伴音频目录 | 启用时必需 | `<APP_ROOT>/offline-audio` | 同 `offline/companion_audio_directory`；通话媒体不因此持久化 |
+| UI 资源 | `resources/`、Qt 资源定义 | 图标、图片及界面资源 | 构建必需 | 随应用资源构建 | 通过 Qt 资源系统统一打包 |
+| 日志 | `StandardOutput`、`StandardError` | 应用/恢复服务日志去向 | 部署项 | systemd journal | 统一收集运行日志，诊断输出脱敏 |
+| 临时状态 | AI 历史、天气快照、实时会话状态 | 当前会话数据 | 固定行为 | 进程内管理 | 重启不从 SQLite 恢复实时 Token 或运动授权 |
+
+## C.8 Motion / UART
+
+运动参数分为应用层可配置项和 MCU 编译期常量。控制刷新、目标时效与 MCU 租约共同约束运动；接线与 GPIO 见附录 D。
+
+| 配置类别 | 配置项 | 作用 | 是否必需 | 当前默认/示例 | 备注 |
+| --- | --- | --- | --- | --- | --- |
+| 启停 | `LONGPET_MOTION_ENABLED` | UART 运动服务开关 | 否 | 默认关闭；service `1` | 自动或远控需要链路及 MCU 有效状态 |
+| UART | `LONGPET_MOTION_DEVICE` | 串口设备 | 条件必需 | 默认/部署 `/dev/ttyS2` | 节点依系统枚举确认 |
+| UART | `kLinkBaud` / Adapter 波特率约束 | 通信基准 | 固定 | `115200`、8N1、无流控 | 当前 Adapter 拒绝其他波特率 |
+| UART 恢复 | `ReconnectIntervalMs` | 打开失败后重连 | 固定 | `2000` ms | 非命令租约 |
+| 人工远控 | `LONGPET_MOTION_REFRESH_MS` | MOVE 刷新周期 | 否 | 默认/部署 `150` ms | 范围 100～200 ms |
+| 人工远控 | `LONGPET_MOTION_REMOTE_LEASE_MS` | 应用层远控租约 | 否 | 默认/部署 `350` ms | 范围 200～450 ms |
+| 人工远控 | `LONGPET_MOTION_DEFAULT_SPEED` | 默认速度命令 | 否 | 默认/部署 `20` | 1～100 控制单位，非 cm/s |
+| 人工远控 | `LONGPET_MOTION_HEAD_STEP_US` | 单次头部步长 | 否 | 默认/部署 `20` μs | 范围 1～100 μs |
+| 状态 | `LONGPET_MOTION_STATUS_POLL_MS` | MCU 状态查询周期 | 否 | 默认/部署 `250` ms | 范围 200～2000 ms |
+| 自动关注 | `LONGPET_AUTO_HEAD_ENABLED` | 启动时仅头部自动关注 | 否 | 默认关闭；service `0` | 不作为人物跟随默认开关 |
+| 自动关注 | `LONGPET_AUTO_HEAD_MAX_TARGET_AGE_MS`、`LONGPET_AUTO_HEAD_TARGET_EXPIRY_MS` | 目标准入年龄与 TARGET 失效时限 | 否 | 默认/部署均 `500` ms | 比 Vision 服务级 freshness 更严格 |
+| 跟随准入 | `LONGPET_FOLLOW_TARGET_STABLE_MS`、`LONGPET_FOLLOW_MOTION_STATUS_MAX_AGE_MS` | 目标稳定窗与 MCU 状态年龄限制 | 否 | 默认/部署 `600`、`750` ms | PERSON_FOLLOW 由业务接口显式开启 |
+| 对齐滞回 | `LONGPET_FOLLOW_ALIGN_ENTER_US`、`LONGPET_FOLLOW_ALIGN_EXIT_US` | 头部偏移进入/退出对齐旋转阈值 | 否 | 默认/部署 `220`、`100` μs | 使用 `head_offset`，不是角度 |
+| 对齐滞回 | `LONGPET_FOLLOW_ALIGN_ENTER_DWELL_MS`、`LONGPET_FOLLOW_ALIGN_EXIT_DWELL_MS` | 进入/退出条件保持时间 | 否 | 默认/部署均 `400` ms | 防止快速切换 |
+| 动作保持 | `LONGPET_FOLLOW_MIN_MOTION_MS` | 最短动作保持时间 | 否 | 默认/部署 `300` ms | 失效停车仍优先 |
+| 远距滞回 | `LONGPET_FOLLOW_FAR_ENTER_HEIGHT`、`LONGPET_FOLLOW_FAR_EXIT_HEIGHT` | 远距进入/退出阈值 | 否 | 默认/部署 `0.28`、`0.34` | 归一化 bbox 高度；需现场标定，非真实测距 |
+| 近距滞回 | `LONGPET_FOLLOW_NEAR_ENTER_HEIGHT`、`LONGPET_FOLLOW_NEAR_EXIT_HEIGHT` | 近距进入/退出阈值 | 否 | 默认/部署 `0.78`、`0.70` | 近距停车；旧 MCU area 5000/10000 不参与底盘决策 |
+| 跟随速度 | `LONGPET_FOLLOW_FORWARD_SPEED`、`LONGPET_FOLLOW_ROTATE_SPEED` | 跟随前进/旋转命令速度 | 否 | 默认/部署 `12`、`10` | 1～100 控制单位 |
+| MCU 模式 | `ControlMode` | 执行侧控制模式 | 固定枚举 | 上电 `SAFE`；另有 `HEAD_ONLY/MANUAL/FOLLOW` | 运行时由模式命令切换，非 INI 默认跟随 |
+| MCU 租约 | `kLinkTimeoutMs`、`kManualCommandTimeoutMs`、`kFollowCommandTimeoutMs`、`kTargetTimeoutMs` | 链路/人工/跟随/目标独立失效窗 | 固定 | 均 `500` ms | 四类时间戳分别维护 |
+| MCU 控制 | `kControlPeriodMs`、`kControlOverrunMs`、`kTurnTimeoutMs` | 控制周期、过载和转弯时限 | 固定 | `100`、`250`、`3000` ms | 属于固件编译期基准 |
+| 舵机边界 | `kServoCenterUs`、`kServoMinimumUs`、`kServoMaximumUs` | 中心与产品软件边界 | 固定 | `1570`、`870`、`2270` μs | 库 attach 范围为 `500～2500` μs，产品动作按软件边界限幅 |
+| 跟头修正 | `kHeadTargetDeadbandPixels`、`kHeadTargetCorrectionDivisor`、`kHeadMaximumCorrectionPerTargetUs` | 死区及单次修正限幅 | 固定 | `10` px、`8`、`40` μs | HEAD/TARGET 共用物理方向映射 |
+
+## C.9 Runtime / systemd / 环境变量
+
+systemd 管理应用启动、设备权限和异常恢复，Hybrid Rootfs 提供运行库与插件环境。关键运行参数如下。
+
+| 配置类别 | 配置项 | 作用 | 是否必需 | 当前默认/示例 | 备注 |
+| --- | --- | --- | --- | --- | --- |
+| 应用服务 | `longpet.service`：`ExecStart`、`WorkingDirectory` | 应用入口与工作目录 | 部署必需 | `<APP_ROOT>/LongPet`、`<APP_ROOT>` | 模板为 simple 服务；按部署账户映射目录 |
+| 服务权限 | `User`、`Group`、`SupplementaryGroups` | 设备访问身份 | 部署必需 | 专用部署用户/组；附加 `video input audio tty dialout` | 正式文档不记录真实账户名 |
+| 启动依赖 | `After`、`Wants` | 网络管理启动顺序 | 部署项 | `NetworkManager.service` | 不表示应用必然等到互联网可达 |
+| 自动恢复 | `Restart`、`RestartSec` | 应用退出后重启 | 部署项 | `always`、`2` s | 重启后旧会话不恢复 |
+| 运行目录 | `RuntimeDirectory`、`RuntimeDirectoryMode`、`XDG_RUNTIME_DIR` | 私有运行时目录 | 部署项 | 专用运行目录、`0700`、`<RUNTIME_DIR>` | 同时设置 `HOME=<APP_ROOT>` |
+| framebuffer | `QT_QPA_PLATFORM` | Qt 平台与显示设备 | 板端必需 | `linuxfb:fb=/dev/fb0:tty=/dev/tty1` | 参数与当前 service 一致 |
+| 触摸 | `QT_QPA_GENERIC_PLUGINS`、`QT_QPA_EVDEV_TOUCHSCREEN_PARAMETERS` | 触摸插件与节点 | 板端必需 | `evdevtouch:/dev/input/event0`、`/dev/input/event0` | 设备节点变更后复核 |
+| UI 环境 | `QT_QPA_FB_HIDECURSOR`、`QT_IM_MODULE` | 隐藏光标、虚拟键盘 | 部署项 | `1`、`qtvirtualkeyboard` | service 模板设置 |
+| Qt runtime | `QT_PLUGIN_PATH`、`QT_QPA_PLATFORM_PLUGIN_PATH`、`QML_IMPORT_PATH`、`QML2_IMPORT_PATH` | 插件及 QML 搜索目录 | 按镜像布局 | `<QT_LIB_DIR>/plugins`、其 `platforms` 子目录、`<QT_LIB_DIR>/qml` | Hybrid Rootfs profile 设置；systemd 不自动读取 shell profile |
+| locale | `LANG` | UTF-8 locale | Qt 运行必需 | Hybrid Rootfs `C.UTF-8` | 还需配套 locale archive；模板未显式设置 `LC_ALL` |
+| 动态库 | 系统库安装位置 / `LD_LIBRARY_PATH` | 解析 Qt、OpenCV、ORT 等库 | 库必须可解析 | Hybrid Rootfs 合入标准系统库目录 | 应用 service 使用系统库搜索路径 |
+| USB 音量 | `LONGPET_ALSA_MIXER_DEVICE` | ALSA mixer | 否 | 部署 `hw:CARD=Device` | 当前源码尝试 `PCM`、`Speaker` 控件 |
+| 在线语音设备 | `LONGPET_AI_CAPTURE_DEVICE`、`LONGPET_AI_PLAYBACK_DEVICE` | 录音与播放设备 | 启用时必需 | 默认/部署 `plughw:CARD=Device,DEV=0` | 通话 `LONGPET_CALL_CAPTURE_DEVICE`、`LONGPET_CALL_PLAYBACK_DEVICE` 默认同设备；通话覆盖需单独设置 |
+| Wi-Fi 恢复 | `rtl8xxxu-wlan0-recover.service`：`ExecStart`、`TimeoutStartSec` | 启动时无线恢复 | 按外设需要 | `<SYSTEM_SBIN>/rtl8xxxu-wlan0-recover`、`70` s | oneshot，日志到 journal；不保存 SSID/密码于本表 |
+
+## C.10 配置安全与发布要求
+
+敏感配置与源码分离，开发配置与发布模板分离；正式交付仅保留脱敏示例，不含真实 Key、Token、密码、账号和精确个人位置。配置变更后重新验证对应能力及共享设备交接；运动阈值变更后复核失效停车。模型或 runtime 更新时同步记录版本、来源、SHA-256 与验证结果；V1.3 始终保留 EXPERIMENTAL 标识，未经验收不能成为正式默认。
 
 ### 附录 D 硬件连接与引脚摘要
 
@@ -3224,6 +3431,146 @@ Wi-Fi 模块的物料标识为 RTL8188FTV，当前驱动识别为 RTL8188FU；�
 
 **表 D-9 软硬件停车与电气保护边界。** 当前 MCU 软件停车机制及验收编号见第 11 章；后续独立硬件保护和整机电气验证与表 5-4 对应。
 
-### 附录 E 第三方软件、库与模型清单
+# 附录 E 第三方软件、库与模型清单
 
-### 附录 F 参考资料
+## E.1 清单说明
+
+本清单列出板端、家属端、MCU 和 PC 训练/导出链路的主要组件，说明版本、用途及项目改动。板端部署版本与 PC 开发环境分别管理，项目训练模型和自维护模块单独列示。许可栏列出现有许可信息，具体发布要求统一见 E.8。
+
+## E.2 系统与基础运行环境
+
+| 组件/项目 | 当前用途 | 版本/基线 | 来源 | 项目使用或修改方式 | 许可状态 |
+| --- | --- | --- | --- | --- | --- |
+| Linux / LoongArch | 主控内核、驱动、设备接口 | 板卡基础镜像 `6.12.0.lsgd` | 板卡系统；[Linux 内核资料](https://docs.kernel.org/arch/loongarch/index.html) | Hybrid Rootfs 保留原内核、模块，不由用户态 SDK 替换 | 许可按发布版本确认，含板卡补丁/驱动 |
+| Buildroot | 用户态交叉构建与 target/SDK | `2024.08`，当前工程配置 | [Buildroot](https://buildroot.org/) | 配置 Qt/AI/媒体组件，自维护 Hybrid Rootfs 合并工具 | 工程 `COPYING`：GPL-2.0-or-later，文件例外及包许可分别核对 |
+| glibc / libstdc++ | C/C++ 基础 ABI | 合并报告 glibc `2.38`；libstdc++ 以当前工程锁定版本为准 | GNU / 板卡基础 rootfs | 保护基础文件并检查 GLIBC/GLIBCXX/CXXABI 符号兼容性 | 许可按发布版本确认 |
+| GCC | LoongArch 交叉编译 | 工程工具链 `13.3` | GNU / 龙芯工具链 | 通用 LoongArch64 标量目标与严格对齐 | 许可按发布版本确认 |
+| systemd | 自启动、恢复、日志 | Buildroot 包 `256.4`；板卡保留系统实例以镜像为准 | [systemd](https://systemd.io/) | 自维护应用与 Wi-Fi 恢复 unit | 多文件/组件许可；许可按发布版本确认 |
+| NetworkManager | 网络状态、Wi-Fi 管理 | Buildroot 包 `1.46.0`；板卡实例以镜像为准 | [NetworkManager](https://networkmanager.dev/) | 应用依赖系统服务及网络管理工具 | 包记录 GPL-2.0+（应用）、LGPL-2.1+（libnm） |
+| SQLite | 提醒、事件、设置持久化 | Buildroot 包 `3.46.0`；Qt 插件实际链接版本另按产物核对 | [SQLite](https://www.sqlite.org/) | Qt SQL 接入，自维护 schema/Repository | 包记录 `blessing`；Qt 插件许可独立核对 |
+
+## E.3 UI / 网络 / 多媒体
+
+| 组件/项目 | 当前用途 | 版本/基线 | 来源 | 项目使用或修改方式 | 许可状态 |
+| --- | --- | --- | --- | --- | --- |
+| Qt 6 | 老人端 Widgets、GUI、SVG、SQL、网络、WebSockets、虚拟键盘 | Buildroot `6.8.1`；CMake 最低 `6.5` | [Qt 官方资料](https://doc.qt.io/qt-6/) | 链接所需模块，采用 linuxfb/evdevtouch；自维护业务/UI | qt6base 包记录含 LGPL-3.0/GPL 及其他许可；各模块分别管理适用许可 |
+| OpenCV | JPEG/图像处理、稀疏 LK 跟踪；PC 评测处理 | 板端 `4.10.0`；Handoff PC 快照 `5.0.0` | [OpenCV](https://opencv.org/) | C++ 链接 core/imgcodecs/imgproc/video；自维护跟踪适配器 | 板端包记录 Apache-2.0 |
+| FFmpeg | Rootfs 媒体组件、OpenCV 视频后端、PC 视频处理 | 板端包 `6.1.2` | [FFmpeg](https://ffmpeg.org/) | 按 Buildroot 配置构建；应用媒体进程主要使用 GStreamer | 包基础记录 LGPL-2.1+、libjpeg license；GPL/外部编解码选项须按实际配置复核 |
+| GStreamer / 插件 | 相机 MJPEG、在线录放及通话管线 | 核心 `1.22.9`；插件按镜像清单 | [GStreamer](https://gstreamer.freedesktop.org/) | 应用调用 `gst-launch-1.0`；显式合入动态加载插件 | 核心包记录 LGPL-2.1+；插件逐项复核 |
+| ALSA lib / 工具 | USB 声卡、mixer、备用 arecord 采集 | alsa-lib `1.2.12`；工具以当前工程锁定版本为准 | [ALSA](https://www.alsa-project.org/) | C++ mixer 接入；音频管线/工具访问设备 | 包记录 LGPL-2.1+（库）、GPL-2.0+（aserver）；工具另核对 |
+| V4L2 / v4l-utils | Linux 摄像头接口及枚举工具 | 内核接口随 `6.12.0.lsgd`；工具以当前工程锁定版本为准 | [Linux Media 文档](https://docs.kernel.org/userspace-api/media/index.html) | 经 GStreamer/OpenCV 接入 UVC，不是独立 AI runtime | 内核及工具分别按上游 LICENSE 复核 |
+| sounddevice / PortAudio / CFFI | KWS 音频采集与 Python 本地接口 | sounddevice `0.5.1`、CFFI `1.16.0`；PortAudio 以当前工程锁定版本为准 | sounddevice、PortAudio、CFFI 上游项目 | 采集进程隔离；Rootfs 补齐 PortAudio/CFFI 动态依赖 | sounddevice METADATA 记录 MIT；其余许可按发布版本确认 |
+
+## E.4 AI / 数值计算
+
+| 组件/项目 | 当前用途 | 版本/基线 | 来源 | 项目使用或修改方式 | 许可状态 |
+| --- | --- | --- | --- | --- | --- |
+| Python | 板端 KWS；PC 工具链 | 板端构建 `3.12.5`；Handoff PC 快照 `3.13.15` | [Python](https://www.python.org/) | 板端源码交叉构建；PC 环境独立管理 | Buildroot 包记录 Python-2.0、others |
+| NumPy | KWS FBank、重采样、VAD、CTC 数值计算 | 板端包 `1.25.0`；PC 快照 `2.4.6` | [NumPy](https://numpy.org/) | 调用库；项目维护纯 NumPy 特征/门控实现 | 包记录 BSD-3-Clause、MIT、Zlib |
+| ONNX Runtime | 板端 KWS 与人物检测；PC ONNX 验证 | 板端 `1.17.1`；Handoff PC 快照 `1.29.0` | [ONNX Runtime](https://onnxruntime.ai/docs/) | C++/Python 接口；LoongArch 无 LSX/LASX 适配、scalar MLAS 数值修复及 ELF 对齐处理 | 板端构建源码 `LICENSE`：MIT；保留修改记录及第三方通知 |
+| sherpa-onnx | 已合入镜像的语音工具及 runtime 适配/数值验证链路 | 构建目录 `1.12.15` | [k2-fsa/sherpa-onnx](https://github.com/k2-fsa/sherpa-onnx) | 交叉构建 Python 接口、禁用不适用向量化；产品 KWS 使用独立 Python/ONNX Runtime 链路 | 构建源码 `LICENSE`：Apache-2.0；模型授权另行核对 |
+| ONNX | PC 模型检查、导出格式/算子规范 | PC 快照 `1.22.0`；正式视觉模型 opset `17` | [ONNX](https://github.com/onnx/onnx) | `onnx.checker` 与静态 FP32 导出验证 | 许可按发布版本确认 |
+| PyTorch / torchvision | PC 视觉训练、微调和导出 | PC 快照 `2.12.1+cu130` / `0.27.1+cu130` | [PyTorch](https://pytorch.org/) | 离线工具；不进入板端运行时 | 许可按发布版本确认 |
+| NVIDIA CUDA | PC GPU 训练环境 | Handoff 快照 CUDA `13.0` | NVIDIA | 开发环境使用，不是板端依赖 | 按 NVIDIA 对应版本条款复核 |
+| PC 辅助 Python 包 | 数据/图像处理与图表、配置读取 | Handoff：Pillow `12.3.0`、Matplotlib `3.11.1`、PyYAML `6.0.3` | 各包官方项目 | 仅开发/验证链路 | 各包许可按发布版本确认 |
+| 在线 ASR / LLM / TTS 服务 | 云端转写、问答、合成 | 模板模型名见 C.2；云端具体版本以服务记录为准 | 阿里云百炼/DashScope 或配置的兼容服务 | 自维护 HTTP Provider；无对应云模型权重随产品分发 | 按所选服务条款和模型使用许可管理 |
+
+## E.5 Vision
+
+| 组件/项目 | 当前用途 | 版本/基线 | 来源 | 项目使用或修改方式 | 许可状态 |
+| --- | --- | --- | --- | --- | --- |
+| TinyissimoYOLO / TinyissimoYOLO-v1-small | 人物检测网络结构及 PC 训练实现 | 固定提交 `19bea4bd1ea1e2c29a6ee6b14bd7494ce8c6ba25` | [ETH-PBL/TinyissimoYOLO](https://github.com/ETH-PBL/TinyissimoYOLO) | **结构来自上游**；采用 `tinyissimo-v1-small.yaml`，维护 reg_max/ONNX exporter 最小补丁 | 文件标识为 AGPL-3.0；固定提交缺顶层 LICENSE，完整授权待确认 |
+| LongPet 人物权重 V1.2 | 正式板端人物检测产品模型 | **FINAL_RECOMMENDED**；文件/hash 见 C.4 | 项目 COCO person-only 训练基线及 LongPet 域微调；Handoff V1.2_FINAL | 项目训练得到的静态 FP32 ONNX 权重 | 第一方训练产物；上游结构、训练实现和数据授权仍需分别复核 |
+| LongPet 人物权重 V1.3 | 扩充场景训练实验 | **EXPERIMENTAL** | 项目扩充场景微调；Handoff V1.3_EXPERIMENTAL | 保留复现实验，不作为默认部署模型 | 同 V1.2，按相同资产规则管理 |
+| YOLOv8x / Ultralytics | PC 训练数据离线辅助标注 teacher | `yolov8x.pt`；精确发布版本以当前工程锁定版本为准 | Ultralytics YOLO；Handoff teacher 资产 | 仅在 PC 端辅助标注；板端运行 Tinyissimo 产品模型 | 发布前需按上游 LICENSE 与权重条款复核 |
+| COCO 2017 | person-only 训练基线数据 | `2017` | [COCO](https://cocodataset.org/) | 筛选人物类并训练项目基线；属于训练数据而非软件库 | 图片与标注许可分别复核，不用软件许可代替数据授权 |
+| Sparse Lucas–Kanade Tracker | 帧间人物框更新 | OpenCV `4.10.0`；项目 `SparseOpticalFlowTracker` | OpenCV `calcOpticalFlowPyrLK` / `goodFeaturesToTrack` | 上游算法 API；项目维护点筛选、几何估计和 Detector 校正协作 | OpenCV 包记录 Apache-2.0；项目封装为第一方代码 |
+| FastestDet 兼容适配器 | 历史检测方案兼容入口 | 以当前工程锁定版本为准 | 当前 `FastestDetAdapter` 及历史报告 | 工厂保留兼容入口，正式部署使用 Tinyissimo V1.2 | 历史权重来源和许可待确认；当前未列入正式部署 |
+
+ONNX Runtime 与 OpenCV 版本及项目兼容修改见 E.3、E.4；本节不重复训练指标。
+
+## E.6 KWS
+
+| 组件/项目 | 当前用途 | 版本/基线 | 来源 | 项目使用或修改方式 | 许可状态 |
+| --- | --- | --- | --- | --- | --- |
+| FSMN-CTC / WeKWS | 中文关键词声学网络与 CTC 匹配方法 | FSMN-CTC | [wenet-e2e/wekws](https://github.com/wenet-e2e/wekws)，算法与工具资料 | 项目以 Python + ONNX Runtime 实现板端运行，结合词条匹配形成关键词事件 | 算法工具与预训练权重的许可分别管理 |
+| `fsmn_ctc.onnx` / `tokens.txt` | 第三方预训练声学权重及配套中文词表 | 模型 SHA-256 见 C.3；组件导入基线 `d349994161b7a2f43e30078a605033b1e2facc25` | 现有预训练资产，原始下载来源未保留 | 使用既有声学权重，项目完成 LoongArch 端侧部署与推理集成 | 权重许可及再分发授权待确认，见 E.8 |
+| `components/longpet-kws` / bridge / 业务映射 | 音频采集、特征处理、关键词识别与业务联动 | 当前工程基线 | 项目自维护组件，保留导入记录 | 维护词条与别名、识别阈值、纯 NumPy FBank、自适应能量 VAD、音频适配、进程交接及业务命令映射 | 自维护代码与导入资产分别管理 |
+
+KWS 采用现有第三方预训练声学模型，项目工作集中于端侧运行、产品词条策略、噪声门控和业务集成。通过本地识别与音频资源协调，设备在断网时仍可提供唤醒及预设快捷动作。
+
+## E.7 Family Desktop / Motion MCU
+
+家属端依赖通过锁文件固定，MCU 使用以下固件构建基线；实际打包时同步保存依赖版本。
+
+| 组件/项目 | 当前用途 | 版本/基线 | 来源 | 项目使用或修改方式 | 许可状态 |
+| --- | --- | --- | --- | --- | --- |
+| Electron | 家属端桌面容器、主进程/预加载 | `44.0.0` | [Electron](https://www.electronjs.org/) | 使用框架及随附 Node.js/Chromium | npm 锁文件记录 MIT；内置依赖通知另核对 |
+| React / React DOM | 家属端 Renderer | 均 `18.3.1` | [React](https://react.dev/) | 自维护页面、状态及交互 | npm 锁文件记录 MIT |
+| Semi Design UI / Icons | 家属端控件与图标 | 均 `2.103.0` | [Semi Design](https://semi.design/) | 引用 UI/图标包 | npm 锁文件记录 MIT |
+| Vite / React 插件 | 家属端前端构建 | `8.2.2` / `6.1.1` | Vite / vitejs | 构建工具，不作为设备端运行服务 | npm 锁文件记录 MIT |
+| electron-builder | 家属端发布打包 | `26.15.3` | electron-userland/electron-builder | 构建期使用 | npm 锁文件记录 MIT |
+| Arduino ESP32 Core | ESP32-S3 固件框架、LEDC/串口/I2C | 记录 `2.0.14`；目标 ESP32S3 Dev Module | [espressif/arduino-esp32](https://github.com/espressif/arduino-esp32) | 使用 Core；Wire `2.0.0`，SPI `2.0.0` 为记录的随附/传递组件 | 发布前需按上游 LICENSE 复核 |
+| Adafruit MPU6050 | MPU6050 驱动分支 | `2.2.9` | Adafruit/Adafruit_MPU6050 | WHO_AM_I=0x68 时使用；实机 0x70 走项目 MPU6500-compatible 寄存器路径 | 发布前需按上游 LICENSE 复核 |
+| Adafruit BusIO / Unified Sensor | Adafruit 总线及传感器依赖 | `1.17.4` / `1.1.15` | Adafruit 对应项目 | BusIO 为传递依赖，Unified Sensor 当前 include | 发布前需按各上游 LICENSE 复核 |
+| ESP32Encoder | 四路编码器计数 | `0.12.0` | ESP32Encoder 上游项目 | HalfQuad 模式 | 发布前需按上游 LICENSE 复核 |
+| PID library | 轮速/航向 PID | `1.2.0` | `PID_v1.h` 对应 PID 上游项目 | 调用库；项目维护控制策略/参数 | 发布前需按上游 LICENSE 复核 |
+| Servo library | 头部舵机脉宽输出 | 记录 Servo `1.3.0` | 当前 `Servo.h` 构建依赖；精确上游包归属未固化 | 按当前固件实际构建包管理 | 精确来源和许可证待补；发布前需按上游 LICENSE 复核 |
+| DHT library | 停车诊断 DHT22 采样 | 记录 DHT `1.4.7` | 当前 `DHT.h` 构建依赖；精确上游包未在锁文件固化 | 诊断使用，不进入正式照护数据链 | 精确包来源待补；发布前需按上游 LICENSE 复核 |
+
+## E.8 来源与许可说明
+
+各组件按实际使用版本保存许可和通知文件，模型结构、预训练权重、项目训练权重及数据集分别管理。KWS 预训练权重的原始下载来源未保留，许可及再分发授权待确认；补齐来源或替换为授权清晰的模型后，再确定其随发布包提供的范围。Tinyissimo 固定提交的完整授权、Servo/DHT 包归属、YOLOv8x 精确版本及部分传递依赖信息也列入发布清单补全项。
+
+发布包按实际包含的组件保留 LICENSE、NOTICE 及适用的源码和修改说明。版本快照、导入提交、模型清单与 SHA-256 用于维护和版本追踪；匿名提交仅保留项目相对路径及脱敏配置。
+
+# 附录 F 参考资料
+
+本附录集中列出硬件手册、开发框架、模型算法和项目技术资料，便于查阅。公开资料链接指向官方或上游项目，具体使用版本见附录 E；项目资料按相对路径定位。
+
+## F.1 芯片与硬件资料
+
+| 编号 | 资料 | 查阅内容 |
+| --- | --- | --- |
+| [1] | 龙芯《[龙芯2K0300处理器用户手册 V1.01](https://www.loongson.cn/uploads/images/2025060909243029508.%E9%BE%99%E8%8A%AF2K0300%E5%A4%84%E7%90%86%E5%99%A8%E7%94%A8%E6%88%B7%E6%89%8B%E5%86%8C_V1.01.pdf)》及《龙芯2K0300先锋派产品规格书 V1.0》；官方[下载中心](https://www.loongson.cn/download/index) | SoC、目标板规格及外设接口 |
+| [2] | Espressif《[ESP32-S3 Hardware Reference](https://docs.espressif.com/projects/esp-idf/en/stable/esp32s3/hw-reference/index.html)》 | 执行侧芯片/模组接口、电气资料 |
+| [3] | Toshiba《[TB6612FNG Datasheet](https://toshiba.semicon-storage.com/info/TB6612FNG_datasheet_en_20141001.pdf?did=10660&prodName=TB6612FNG)》 | 双路电机驱动、STBY/输出状态 |
+| [4] | TDK InvenSense《[MPU-6500 Product Specification](https://invensense.tdk.com/wp-content/uploads/2020/06/PS-MPU-6500A-01-v1.3.pdf)》 | IMU 寄存器、识别码与陀螺仪数据接口 |
+
+## F.2 系统与开发框架资料
+
+| 编号 | 资料 | 查阅内容 |
+| --- | --- | --- |
+| [5] | Buildroot《[The Buildroot user manual](https://buildroot.org/downloads/manual/manual.html)》 | 配置、交叉构建、target/SDK 与许可材料 |
+| [6] | Linux Kernel《[LoongArch Architecture](https://docs.kernel.org/arch/loongarch/index.html)》及 [Media userspace API](https://docs.kernel.org/userspace-api/media/index.html) | ISA/启动与 V4L2 接口 |
+| [7] | Qt《[Qt 6 Documentation](https://doc.qt.io/qt-6/)》 | Widgets、SQL、Network、WebSockets、平台插件 |
+| [8] | Microsoft《[ONNX Runtime Documentation](https://onnxruntime.ai/docs/)》 | C/C++/Python 推理接口、构建与线程配置 |
+| [9] | OpenCV《[Object Tracking](https://docs.opencv.org/4.x/dc/d6b/group__video__track.html)》 | Sparse Lucas–Kanade 跟踪 API |
+| [10] | FFmpeg《[Documentation](https://ffmpeg.org/documentation.html)》；GStreamer《[Documentation](https://gstreamer.freedesktop.org/documentation/)》 | 视频处理与采集/录放管线 |
+| [11] | systemd《[systemd.service](https://www.freedesktop.org/software/systemd/man/latest/systemd.service.html)》及工程版本随附手册 | 服务生命周期、依赖、恢复与日志 |
+
+## F.3 AI / 模型资料
+
+| 编号 | 资料 | 查阅内容 |
+| --- | --- | --- |
+| [12] | [ETH-PBL/TinyissimoYOLO](https://github.com/ETH-PBL/TinyissimoYOLO)，固定提交见 E.5 | 上游 v1-small 网络结构与训练/导出实现 |
+| [13] | [wenet-e2e/wekws](https://github.com/wenet-e2e/wekws) | FSMN-CTC 关键词识别算法与工具资料；当前权重来源说明见 E.6 |
+| [14] | ONNX《[Open Neural Network Exchange Intermediate Representation](https://github.com/onnx/onnx/blob/main/docs/IR.md)》 | ONNX 图、类型、版本与算子集规范 |
+| [15] | [k2-fsa/sherpa-onnx](https://github.com/k2-fsa/sherpa-onnx) | 语音工具构建与运行库适配验证 |
+| [16] | [COCO 2017](https://cocodataset.org/) 数据说明及 Vision Handoff teacher/训练记录 | 人物类训练基线、离线辅助标注与数据追溯 |
+
+## F.4 项目内部资料
+
+| 编号 | 资料及相对项目位置 | 查阅内容 |
+| --- | --- | --- |
+| [17] | Vision Final Handoff：`00_README/README.md`、`10_reports/final/LongPet-Vision-Final-Technical-Report.md`、`LongPet-Vision-Final-Test-Report.md`、`03_models/model_manifest.csv`、`05_datasets/V1.2/manifest.json` | 模型版本、训练与优化过程、数据集及最终测试结果 |
+| [18] | LongPet：`components/longpet-kws/README.md`、`UPSTREAM_COMMIT`、`deploy/kws/longpet_kws_bridge.py` | 声学资产标识、组件导入基线、关键词配置与进程桥接 |
+| [19] | LongPet：`docs/LongPet-AI-Provider-Split-and-Aliyun-Report.md`、`LongPet-AI-Voice-V3-KWS-PR3-Integration-Report-2026-09-07.md`、`LongPet-KWS-VAD-CPU-and-Voice-Latency-Audit-2026-09-11.md` | 分项 Provider、音频交接与 VAD/时延测试 |
+| [20] | Motion MCU：`docs/motion-protocol-v2.md`、`firmware-baseline.md`、`bench-test-report.md`；提交材料《LongPet 产品运动功能测试报告 2026-09-13 V1.3》 | 运动协议、固件构建基线、台架测试与 V1.3 实机验收 |
+| [21] | LongPet：`docs/LongPet-Weather-Feature-Report.md`；`src/data/WeatherConfigRepository.cpp`、`src/services/WeatherService.cpp` | 天气配置、缓存时效与失败恢复 |
+| [22] | LongPet：`docs/LongPet-FamilyLink-ReadOnly-Report.md`、`LongPet-FamilyLink-Write-Report.md`、`LongPet-Family-Remote-Control-V1-Report.md` | 家庭接口读写、鉴权与远控租约 |
+| [23] | Family Desktop：`docs/FAMILY_LINK_API.md`、`VIDEO_CALL_MEDIA_PROTOCOL.md`、`FAMILY_REMOTE_CONTROL_V1.md`、`IMPLEMENTATION_REPORT.md` | 双端接口、媒体和家属端实现/验证 |
+| [24] | LongPet：`docs/LongPet-Vision-V2.0-Detector-Tracker-Report.md`、`LongPet-Vision-V2.1-Family-AI-View-Report.md`、`LongPet-Vision-V2.3-Head-Body-Person-Following-Report.md` | 视觉协作、AI 视野、跟头与人物跟随 |
+| [25] | Buildroot / LoongArch：`rootfs-hybrid/README.md`、`config/components.yaml`、`reports/merge-report.md`（2026-08-29） | 混合 rootfs 组件、ABI/ISA、基础文件保护及 hash 校验 |
+| [26] | LongPet：`deploy/配置说明.md`、`deploy/longpet.service`、`deploy/rtl8xxxu-wlan0-recover.service`、`docs/LongPet-V0.2-Board-Integration-Report.md` | 配置与板端集成、应用/Wi-Fi 启动恢复基准 |
+
